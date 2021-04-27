@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 #https://www.pixilart.com/draw
 #https://towardsdatascience.com/extracting-circles-and-long-edges-from-images-using-opencv-and-python-236218f0fee4
 #https://maker.pro/raspberry-pi/tutorial/grid-detection-with-opencv-on-raspberry-pi
@@ -15,22 +15,22 @@ image = cv2.imread("test_images/boxbad.jpg")
 image = cv2.imread("test_images/unmodified3.PNG")
 #image = cv2.imread("test_images/real4.PNG")
 #image = cv2.imread("test_images/header.PNG")
-
+image = cv2.imread("test_images/ss.PNG")
 cv2.imshow("Image", image)
 cv2.waitKey()
 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 cv2.imshow("gray", gray)
 cv2.waitKey()
 
-grayfilter = cv2.bilateralFilter(gray, 11, 17, 17)
-edged = cv2.Canny(grayfilter, 30, 200)
-cv2.imshow("edged", edged)
-cv2.waitKey()
-contours, hierarchy = cv2.findContours(edged.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+#grayfilter = cv2.bilateralFilter(gray, 11, 17, 17)
+#edged = cv2.Canny(grayfilter, 30, 200)
+#cv2.imshow("edged", edged)
+#cv2.waitKey()
+#contours, hierarchy = cv2.findContours(edged.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-#blur = cv2.GaussianBlur(gray, (5,5), 0)
-#thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
-#contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+blur = cv2.GaussianBlur(gray, (5,5), 0)
+thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
+contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
 
 #print(contours)
@@ -109,7 +109,7 @@ cv2.imshow('warp', warp)
 cv2.waitKey()
 
 # convert to black and white
-(thresh, bg) = cv2.threshold(warp, 50, 255, cv2.THRESH_BINARY)
+(thresh, bg) = cv2.threshold(warp, 100, 255, cv2.THRESH_BINARY)
 cv2.imshow("bg ", bg)
 cv2.waitKey()
 
