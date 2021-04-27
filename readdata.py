@@ -8,14 +8,26 @@ import cv2
 import numpy as np
 import sys
 import zlib
+import mss
 print(cv2.__version__)
 
-image = cv2.imread("test_images/box2.png")
-image = cv2.imread("test_images/boxbad.jpg")
-image = cv2.imread("test_images/unmodified3.PNG")
+wexpt = 75
+worg = 77
+hexpt = 49
+horg = 51
+
+
+sct = mss.mss()
+# Part of the screen to capture
+monitor = {"top": 40, "left": 0, "width": 800, "height": 640}
+image = np.array(sct.grab(monitor))
+
+#image = cv2.imread("test_images/box2.png")
+#image = cv2.imread("test_images/boxbad.jpg")
+#image = cv2.imread("test_images/unmodified3.PNG")
 #image = cv2.imread("test_images/real4.PNG")
 #image = cv2.imread("test_images/header.PNG")
-image = cv2.imread("test_images/ss.PNG")
+#image = cv2.imread("test_images/ss.PNG")
 cv2.imshow("Image", image)
 cv2.waitKey()
 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -35,6 +47,34 @@ contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_S
 
 #print(contours)
 max_area = 0
+#c = -1
+#cnt = 0
+#for i in contours:
+#        c+=1
+#        area = cv2.contourArea(i)
+#        if (area <= 1000):
+#            continue         
+#        #if (area > max_area) and (area > 1000):
+#        print('c ' + str(c) + 'contourslen ' + str(len(contours)))
+#        print(i)
+#        peri = cv2.arcLength(i, True)
+#        approx = cv2.approxPolyDP(i, 0.015 * peri, True)
+#        if len(approx != 4):
+#            continue
+#        print("approx")
+#        print(approx)
+#        copy2 = image.copy()
+#        cv2.drawContours(copy2, [approx], 0, (0, 255, 0), 3)
+#        cv2.imshow("approxyz", copy2)            
+#        cv2.waitKey()
+#        print("area " + str(area))
+#        max_area = area
+#        cnt = i
+#        print("drawing")
+#        imcopy = image.copy()
+#        cv2.drawContours(imcopy, contours, c, (0, 255, 0), 3)
+#        cv2.imshow("contours", imcopy)
+#        cv2.waitKey()
 c = 0
 cnt = 0
 for i in contours:
@@ -50,7 +90,8 @@ for i in contours:
             cv2.imshow("contours", imcopy)
             cv2.waitKey()
                     
-        c+=1
+        c+=1                    
+        
 
 
 # simplify contour to 4 point rect
@@ -119,14 +160,6 @@ y = 0
 w = warp.shape[1]
 h = warp.shape[0]
 print('w ' + str(w) + ' h' + str(h))
-wexpt = 8
-worg = 10
-hexpt = 8
-horg = 10
-wexpt = 75
-worg = 77
-hexpt = 49
-horg = 51
 
 wscale = w / float(worg)
 hscale = h / float(horg)
