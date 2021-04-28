@@ -15,11 +15,14 @@ wexpt = 75
 worg = 77
 hexpt = 49
 horg = 51
+ratioorg = worg/horg
+print("ratioorg " + str(ratioorg))
 
 
 sct = mss.mss()
 # Part of the screen to capture
-monitor = {"top": 40, "left": 0, "width": 800, "height": 640}
+mon = sct.monitors[2]
+monitor = {"top": mon["top"], "left": mon["left"], "width": 1200, "height": 1200, "mon" : mon}
 image = np.array(sct.grab(monitor))
 
 #image = cv2.imread("test_images/box2.png")
@@ -47,59 +50,45 @@ contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_S
 
 #print(contours)
 max_area = 0
-#c = -1
-#cnt = 0
-#for i in contours:
-#        c+=1
-#        area = cv2.contourArea(i)
-#        if (area <= 1000):
-#            continue         
-#        #if (area > max_area) and (area > 1000):
-#        print('c ' + str(c) + 'contourslen ' + str(len(contours)))
-#        print(i)
-#        peri = cv2.arcLength(i, True)
-#        approx = cv2.approxPolyDP(i, 0.015 * peri, True)
-#        if len(approx != 4):
-#            continue
-#        print("approx")
-#        print(approx)
-#        copy2 = image.copy()
-#        cv2.drawContours(copy2, [approx], 0, (0, 255, 0), 3)
-#        cv2.imshow("approxyz", copy2)            
-#        cv2.waitKey()
-#        print("area " + str(area))
-#        max_area = area
-#        cnt = i
-#        print("drawing")
-#        imcopy = image.copy()
-#        cv2.drawContours(imcopy, contours, c, (0, 255, 0), 3)
-#        cv2.imshow("contours", imcopy)
-#        cv2.waitKey()
-c = 0
+c = -1
 cnt = 0
 for i in contours:
+        c+=1
         area = cv2.contourArea(i)
-        #if (area > 1000):         
-        if (area > max_area) and (area > 1000):
-            print("area " + str(area))
-            max_area = area
-            cnt = i
-            print("drawing")
-            imcopy = image.copy()
-            cv2.drawContours(imcopy, contours, c, (0, 255, 0), 3)
-            cv2.imshow("contours", imcopy)
-            cv2.waitKey()
-                    
-        c+=1                    
-        
-
-
-# simplify contour to 4 point rect
-peri = cv2.arcLength(cnt, True)
-approx = cv2.approxPolyDP(cnt, 0.015 * peri, True)
-print('apprx')
-print(approx)
-cnt = approx
+        if (area <= 1000):
+                continue
+        if (area <= max_area):
+                continue
+        # try to find rectangle
+        peri = cv2.arcLength(i, True)
+        approx = cv2.approxPolyDP(i, 0.015 * peri, True)
+        if len(approx) != 4:
+            continue
+        print(approx)
+        rot_rect = cv2.minAreaRect(approx)
+        (center), (width,height), angle = rot_rect
+        # greater than 45 means we rotated the wrong way to get width and height
+        # assuming the photo was taken <= 45 degress off
+        if angle > 45:
+                th = height
+                height = width
+                width = th                     
+        print('width ' + str(width) + ' height ' + str(height))        
+        ratio = width/height
+        print('ratio ' + str(ratio))
+        # needs to be close to data frame ratio, but accommodate non-square pixels
+        if abs(ratio-ratioorg) > 0.2:
+                continue        
+        print("area " + str(area))        
+        max_area = area
+        cnt = approx
+        imcopy = image.copy()
+        cv2.drawContours(imcopy, contours, c, (0, 255, 0), 3)
+        cv2.imshow("contours", imcopy)
+        cv2.waitKey()
+if isinstance(cnt, int):
+        print("No RECT")
+        sys.exit(1)
 
 # now that we have our screen contour, we need to determine
 # the top-left, top-right, bottom-right, and bottom-left
@@ -165,8 +154,6 @@ wscale = w / float(worg)
 hscale = h / float(horg)
 print('wscale ' + str(wscale) + ' hscale ' + str(hscale))
 
-
-
 neww = int(w * (float(wexpt)/worg))
 newh = int(h * (float(hexpt)/horg))
 newx = ((w - neww) / 2) + x
@@ -189,7 +176,7 @@ for ypix in range(0, hexpt):
     for xpix in range(0, wexpt):
         actx = int((xpix + 0.5) * wscale)
         pixel = roi[acty, actx]
-        print(' x ' + str(actx) + ' y ' + str(acty) + ' : '+str(pixel))
+        #print(' x ' + str(actx) + ' y ' + str(acty) + ' : '+str(pixel))
         mybits.append((~pixel) & 1)
 
 # abort if the wrong number of bits were read somehow
