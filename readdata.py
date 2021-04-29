@@ -202,7 +202,7 @@ def decodeImage(image):
         return thebytes[0] | (thebytes[1] << 8)
 
     def bytes2uint16(thebytes, index):
-        return thebytes[0] | (thebytes[1] << 8)
+        return thebytes[index] | (thebytes[index+1] << 8)
     
     def decode_bits(mybits):
         # read size
