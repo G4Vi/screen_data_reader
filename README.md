@@ -1,13 +1,13 @@
 screen_data_reader
 ==================
 
-Read data from a screenshot or picture of screen
+Read data from the psx's screen via video or screen recording
 
-Used for parsing custom data format outputted by a psx app as the psx is too slow at generating QR codes.
+Used for locating and decoding images outputted by [psx_screen_dumper](https://github.com/G4Vi/psx_screen_dumper). 
 
-See [psx_screen_dumper](https://github.com/G4Vi/psx_screen_dumper)
+The psx appears to be too slow to generate QR codes in realtime, so this was created.
 
-# Install
+## Install
 
 `git clone` and `cd ` repo.
 
@@ -19,10 +19,13 @@ Update pip `(.venv)$ pip install --upgrade pip`
 
 Install requirements `(.venv)$ pip install -r requirements.txt`
 
-# Run
+## Run
 
 outside env: `$ ./readdata.sh`
 
 from venv: `(.venv)$ ./readdata.py`
 
+See `--help` . By default the filename provided by psx_screen_dumper is used and saved to current directory.
 
+## License
+MIT, see `LICENSE`
