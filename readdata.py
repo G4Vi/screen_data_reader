@@ -1,4 +1,29 @@
 #!/usr/bin/env python3
+
+'''
+MIT License
+
+Copyright (c) 2021 Gavin Hayes and other screen_data_reader authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'''
+
 #https://www.pixilart.com/draw
 #https://towardsdatascience.com/extracting-circles-and-long-edges-from-images-using-opencv-and-python-236218f0fee4
 #https://maker.pro/raspberry-pi/tutorial/grid-detection-with-opencv-on-raspberry-pi
@@ -6,7 +31,7 @@
 #https://www.pyimagesearch.com/2014/05/05/building-pokedex-python-opencv-perspective-warping-step-5-6/
 import cv2
 import numpy as np
-import sys
+import sys, getopt, os
 import zlib
 import mss
 import statistics
@@ -17,9 +42,31 @@ worg = 77
 hexpt = 49
 horg = 51
 ratioorg = worg/horg
+
+
+OUTFILE = ''
+OUTDIR  = ''
+
+def usage(code):
+    print('readdata.py -o <outputfile>')
+    print('readdata.py -d <outputdir>')
+    sys.exit(code)
+
+argv = sys.argv[1:]
+try:
+    opts, args = getopt.getopt(argv,"ho:d:",["help", "outfile=","outdir="])
+except getopt.GetoptError:        
+    usage(2)
+for opt, arg in opts:
+    if opt in ("-h", "--help"):
+        usage(0)
+    elif opt in ("-o", "--outfile"):
+        OUTFILE = arg
+    elif opt in ("-d", "--outdir"):
+        OUTDIR = arg    
+
+
 print("ratioorg " + str(ratioorg))
-
-
 sct = mss.mss()
 # Part of the screen to capture
 mon = sct.monitors[2]
@@ -164,8 +211,11 @@ def decodeImage(image):
     
     # read the bits
     mybits = []
+    if (int((hexpt-0.5)*hscale) >= len(roi)) or (int((wexpt-0.5)*wscale) >= len(roi[0])):
+        print("image too small")
+        return
     for ypix in range(0, hexpt):
-        acty = int((ypix + 0.5)*hscale)
+        acty = int((ypix + 0.5)*hscale)         
         for xpix in range(0, wexpt):
             actx = int((xpix + 0.5) * wscale)
             pixel = roi[acty, actx]
@@ -301,15 +351,38 @@ while True:
         if isinstance(results, int):
             results = [None] * (result[1]+1)
         if not results[result[0]]:
-            print("new result " + str(result[0]))
+            print("frame: " + str(result[0]))
             results[result[0]] = result[2]
             if results.count(None) == 0:
                 break
     if type(results) == list:
         for i in results:
             print('isNone ' + str(i is None))
-print("dumping to file")
-f = open("dump/data.txt", "wb")
-for buf in results:
-    f.write(buf)
+
+# the firstframe just has the filename
+filename = results.pop(0).decode("utf-8");
+# the lastframe just has the data crc32 in little endian 
+indatacrc32arr = results.pop();
+indatacrc32 = indatacrc32arr[0]| (indatacrc32arr[1] << 8) | (indatacrc32arr[2] << 16) | (indatacrc32arr[3] << 24)
+
+# verify the read crc32 matches the overall crc32 
+thedata = b''.join(results)
+calccrc32 = zlib.crc32(thedata)
+if calccrc32 == indatacrc32:
+    print('crc32 0x%X' % calccrc32)
+else:
+    print('crc32 mismatch, calculated 0x%X expected 0x%X' %(calccrc32, indatacrc32))
+
+path = ''
+if OUTFILE != '':
+    path = OUTFILE
+elif OUTDIR != '':
+    path = os.path.join(OUTDIR, filename)
+else:
+    path = filename
+print("dumping to " + path)
+f = open(path, "wb")
+#for buf in results:
+#    f.write(buf)
+f.write(thedata)
 f.close()
