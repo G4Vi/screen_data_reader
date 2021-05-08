@@ -21,9 +21,9 @@ Install requirements `(.venv)$ pip install -r requirements.txt`
 
 ## Run
 
-outside env: `$ ./readdata.sh`
+outside env: `$ ./screen_data_reader.sh`
 
-from venv: `(.venv)$ ./readdata.py`
+from venv: `(.venv)$ ./screen_data_reader.py`
 
 See `--help` . By default the filename provided by psx_screen_dumper is used and saved to current directory.
 

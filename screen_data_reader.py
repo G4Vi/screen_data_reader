@@ -48,8 +48,8 @@ OUTFILE = ''
 OUTDIR  = ''
 
 def usage(code):
-    print('readdata.py -o <outputfile>')
-    print('readdata.py -d <outputdir>')
+    print('screen_data_reader.py -o <outputfile>')
+    print('screen_data_reader.py -d <outputdir>')
     sys.exit(code)
 
 argv = sys.argv[1:]
