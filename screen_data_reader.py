@@ -189,7 +189,7 @@ def decodeImage(image):
         #cv2.waitKey()
         
         # convert to black and white
-        (thresh, bg) = cv2.threshold(warp, 100, 255, cv2.THRESH_BINARY)
+        (thresh, bg) = cv2.threshold(warp, 100, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
         #cv2.imshow("bg ", bg)
         #cv2.waitKey()
         
@@ -378,6 +378,7 @@ def processFrames(group_number):
             continue
         if len(results) > 0 and result['startindex'] == results[-1]['startindex']:
             continue
+        print('append frame ' + str(result['startindex']) + ' endindex ' + str(result['endindex']) )
         results.append(result)
     return results
 
