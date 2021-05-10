@@ -409,16 +409,22 @@ if __name__ == '__main__':
     
     numframes = resultsone[0]['endindex']+1
     results = [None] * (numframes)
-    resulti = 0 
+    resulti = 0
+    
     for result in resultsone:
         #print('resulti ' + str(resulti) + ' crc32 ' + hex(result['crc32']))    
         results[resulti] = result['data']
         resulti += 1
-    
-    if len(results) != numframes:
-        print('not enough results')
+           
+    gotnone = 0
+    resulti = 0 
+    for result in results:
+        if result is None:
+            print('missing frame ' + str(resulti))
+            gotnone = 1
+        resulti += 1
+    if gotnone:
         sys.exit(1)
-    
     
     # the firstframe just has the filename
     undecfilename = results.pop(0)
