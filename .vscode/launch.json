@@ -9,6 +9,7 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
+            "args": ["--infile", "test_videos/fastdark.mp4"],
             "console": "integratedTerminal"
         }
     ]

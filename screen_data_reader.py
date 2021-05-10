@@ -36,7 +36,7 @@ import zlib
 import mss
 import statistics
 from multiprocessing import Pool
-
+from matplotlib import pyplot as plt
 print(cv2.__version__)
 
 wexpt = 75
@@ -77,7 +77,7 @@ sct = mss.mss()
 mon = sct.monitors[2]
 monitor = {"top": mon["top"], "left": mon["left"], "width": 1920, "height": 1080, "mon" : mon}
 
-def decodeImage(image):
+def decodeImage(image, laststart):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     #cv2.imshow("gray", gray)
     #cv2.waitKey()
@@ -110,11 +110,11 @@ def decodeImage(image):
         if len(approx) != 4:
             continue
         # check the intensity of the contour to remove some false positives
-        colorsum = 0
-        for p in approx:
-            colorsum += gray[p[0][1]][p[0][0]]
-        if colorsum < 200:
-            continue
+        #colorsum = 0
+        #for p in approx:
+        #    colorsum += gray[p[0][1]][p[0][0]]
+        #if colorsum < 200:
+        #    continue
         rot_rect = cv2.minAreaRect(approx)
         (center), (width,height), angle = rot_rect
         # greater than 45 means we rotated the wrong way to get width and height
@@ -129,11 +129,11 @@ def decodeImage(image):
             continue             
         max_area = area        
         tocheck.append(approx)
-        #imcopy = image.copy()
-        #cv2.drawContours(imcopy, contours, c, (0, 255, 0), 3)
-        #cv2.drawContours(imcopy, [approx], 0, (255, 0, 0), 3)
-        #cv2.imshow("contours", imcopy)
-        #cv2.waitKey()
+        #if laststart == 16:
+        #    imcopy = image.copy()
+        #    cv2.drawContours(imcopy, [approx], 0, (255, 0, 0), 3)
+        #    cv2.imshow("approx", imcopy)
+        #    cv2.waitKey()
     if len(tocheck) == 0:
         #print("No RECT")
         return
@@ -189,9 +189,120 @@ def decodeImage(image):
         #cv2.waitKey()
         
         # convert to black and white
-        (thresh, bg) = cv2.threshold(warp, 100, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        (thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 401, 2)
+        #(thresh, bg) = cv2.threshold(warp, 225, 255, cv2.THRESH_BINARY)        
+        if laststart == 16:
+            #cv2.imshow("warp", warp)
+            #cv2.waitKey()
+            #cv2.imshow("bg", bg)
+            #cv2.waitKey()
+            #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 401, 2)
+            #(thresh, bg) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
+            
+            
+            sigma = 0.23
+            v = np.median(warp)
+            l = int(max(0, (1.0 - sigma) * v))
+            u = int(min(255, (1.0 + sigma) * v))
+            bg = cv2.Canny(warp, l, u)
+            #bg = cv2.Canny(warp, 200, 230)
+            cv2.imshow("new", bg)
+            cv2.waitKey()           
+            
+            thecnts, heirachy = cv2.findContours(bg, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            #print('foundcnts ' + str(len(thecnts)))
+            maxdepth = 0
+            cindex = 0
+            for acnt in thecnts:
+                depth = 0
+                checkindex = cindex
+                while heirachy[0][checkindex][3] != -1:
+                    depth += 1
+                    checkindex = heirachy[0][checkindex][3]
+                if depth > maxdepth:
+                    maxdepth = depth
+                cindex += 1
+            #if (maxdepth % 2) != 0:
+            #    continue
+            #wcopy = warp.copy()
+            wcopy = cv2.cvtColor(warp,cv2.COLOR_GRAY2RGB)
+            iswhite = 1
+            print("maxd " + str(maxdepth))            
+            for lvl in range(0, maxdepth+1):
+                if (lvl % 2) or maxdepth == 1:
+                    cindex = 0
+                    for acnt in thecnts:
+                        checkindex = cindex
+                        depth = 0
+                        while heirachy[0][checkindex][3] != -1:
+                            depth += 1
+                            checkindex = heirachy[0][checkindex][3]
+                        if depth == lvl:
+                            if iswhite:
+                                cv2.fillPoly(wcopy, [acnt], (255, 255, 255))
+                            else:
+                                cv2.fillPoly(wcopy, [acnt], (0, 255, 0))
+                        cindex += 1
+                    iswhite = not iswhite
+            
+            (thresh, bg) = cv2.threshold(wcopy, 254, 255, cv2.THRESH_BINARY)
+            cv2.imshow("edges", bg)
+            cv2.waitKey()   
+            #wcopy = cv2.cvtColor(warp,cv2.COLOR_GRAY2RGB)
+            #cindex = 0
+            #for acnt in thecnts:
+            #    depth = 0
+            #    checkindex = cindex
+            #    while heirachy[0][checkindex][3] != -1:
+            #        depth += 1
+            #        checkindex = heirachy[0][checkindex][3]
+            #    white = (depth % 2)                    
+            #    if (depth == 1):
+            #        if white:
+            #            cv2.fillPoly(wcopy, [acnt], (255, 255, 255))
+            #        else:
+            #            cv2.fillPoly(wcopy, [acnt], (0, 0, 0))
+            #        #cv2.drawContours(wcopy, [acnt], 0, (0, 255, 0), 3)
+            #        #                
+            #    cindex += 1
+            #cv2.imshow("edges", wcopy)
+            #cv2.waitKey()   
+            #cindex = 0
+            #for acnt in thecnts:
+            #    depth = 0
+            #    checkindex = cindex
+            #    while heirachy[0][checkindex][3] != -1:
+            #        depth += 1
+            #        checkindex = heirachy[0][checkindex][3]   
+            #    white = not (depth % 2)                 
+            #    if (depth == 3):
+            #        if white:
+            #            cv2.fillPoly(wcopy, [acnt], (255, 255, 255))
+            #        else:
+            #            cv2.fillPoly(wcopy, [acnt], (0, 0, 0))
+            #        #cv2.drawContours(wcopy, [acnt], 0, (0, 255, 0), 3)
+            #        #                
+            #    cindex += 1
+            #cv2.imshow("edges2", wcopy)
+            #cv2.waitKey()           
+
+            #adat = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 4001, 2)
+            #cv2.imshow("adat", adat)
+            #cv2.waitKey()
         #cv2.imshow("bg ", bg)
         #cv2.waitKey()
+        if laststart == 16:
+            #cv2.imshow('warp', warp)
+            #cv2.waitKey()
+            #cv2.imshow("bg ", bg)
+            #cv2.waitKey()
+            (thresh, alt) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
+            bg = alt 
+            #cv2.imshow("alt ", alt)
+            #cv2.waitKey()
+                   
+
         
         # remove frame
         x = 0
@@ -303,7 +414,7 @@ def decodeImage(image):
             return {'startindex' : startindex, 'endindex' : endindex, 'crc32' : calcchk, 'data' : databytes}
         
         decoded = decode_bits(mybits)
-        if decoded:
+        if decoded:            
             return decoded
         
         #print("using slow method")
@@ -368,16 +479,18 @@ def processFrames(group_number):
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_jump_unit * group_number)
     proc_frames = -1
     results = []
+    laststart = 0
     while proc_frames < frame_jump_unit:
         proc_frames += 1
         ret, image = cap.read()
         if not ret:
             break
-        result = decodeImage(image)
+        result = decodeImage(image, laststart)
         if type(result) != dict:
             continue
         if len(results) > 0 and result['startindex'] == results[-1]['startindex']:
             continue
+        laststart = result['startindex']
         print('append frame ' + str(result['startindex']) + ' endindex ' + str(result['endindex']) )
         results.append(result)
     return results
@@ -413,8 +526,7 @@ if __name__ == '__main__':
     resulti = 0
     
     for result in resultsone:
-        #print('resulti ' + str(resulti) + ' crc32 ' + hex(result['crc32']))    
-        results[resulti] = result['data']
+        results[result['startindex']] = result['data']
         resulti += 1
            
     gotnone = 0
