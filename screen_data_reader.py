@@ -76,6 +76,8 @@ sct = mss.mss()
 # Part of the screen to capture
 mon = sct.monitors[2]
 monitor = {"top": mon["top"], "left": mon["left"], "width": 1920, "height": 1080, "mon" : mon}
+smallest = 255
+largest = 0
 
 def decodeImage(image, laststart):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
@@ -129,7 +131,8 @@ def decodeImage(image, laststart):
         #print("No RECT")
         return
     #print('tocheck len ' + str(len(tocheck)))
-    
+    largest = 0
+    smallest = 255
     for cnt in tocheck:
         # now that we have our screen contour, we need to determine
         # the top-left, top-right, bottom-right, and bottom-left
@@ -187,10 +190,26 @@ def decodeImage(image, laststart):
         #(thresh, bg) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
         
         warp = cv2.GaussianBlur(warp, (5,5), 0)
+        tmax = np.amax(warp)
+        tmin = np.amin(warp)
+        threshval = int(((tmax-tmin)/2) + tmin+55)
+        #print('thresval ' + str(threshval) + 'tmax ' + str(tmax) + ' tmin ' + str(tmin))
+        (thresh, bg) = cv2.threshold(warp, threshval, 255, cv2.THRESH_BINARY)
+
+        #if tmax > largest:
+        #    print('largest ' + str(tmax))
+        #    largest = tmax
+        #
+        #if tmin < smallest:
+        #    print('smallest' + str(tmin))
+        #    smallest = tmin
+        
+
+
         #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 61, 1)
-        (thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        cv2.imshow('adaptive', bg)
-        cv2.waitKey()
+        #(thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        #cv2.imshow('adaptive', bg)
+        #cv2.waitKey()
         
         # remove frame
         x = 0
