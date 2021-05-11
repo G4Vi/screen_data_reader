@@ -78,16 +78,7 @@ mon = sct.monitors[2]
 monitor = {"top": mon["top"], "left": mon["left"], "width": 1920, "height": 1080, "mon" : mon}
 
 def decodeImage(image, laststart):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    #cv2.imshow("gray", gray)
-    #cv2.waitKey()
-    
-    #grayfilter = cv2.bilateralFilter(gray, 11, 17, 17)
-    #edged = cv2.Canny(grayfilter, 30, 200)
-    #cv2.imshow("edged", edged)
-    #cv2.waitKey()
-    #contours, hierarchy = cv2.findContours(edged.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
     blur = cv2.GaussianBlur(gray, (5,5), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -189,120 +180,17 @@ def decodeImage(image, laststart):
         #cv2.waitKey()
         
         # convert to black and white
+        #(thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        # works on faststock
+        #(thresh, bg) = cv2.threshold(warp, 225, 255, cv2.THRESH_BINARY)
+        # works on fastdark
+        #(thresh, bg) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
+        
+        warp = cv2.GaussianBlur(warp, (5,5), 0)
+        #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 61, 1)
         (thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 401, 2)
-        #(thresh, bg) = cv2.threshold(warp, 225, 255, cv2.THRESH_BINARY)        
-        if laststart == 16:
-            #cv2.imshow("warp", warp)
-            #cv2.waitKey()
-            #cv2.imshow("bg", bg)
-            #cv2.waitKey()
-            #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 401, 2)
-            #(thresh, bg) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
-            
-            
-            sigma = 0.23
-            v = np.median(warp)
-            l = int(max(0, (1.0 - sigma) * v))
-            u = int(min(255, (1.0 + sigma) * v))
-            bg = cv2.Canny(warp, l, u)
-            #bg = cv2.Canny(warp, 200, 230)
-            cv2.imshow("new", bg)
-            cv2.waitKey()           
-            
-            thecnts, heirachy = cv2.findContours(bg, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-            #print('foundcnts ' + str(len(thecnts)))
-            maxdepth = 0
-            cindex = 0
-            for acnt in thecnts:
-                depth = 0
-                checkindex = cindex
-                while heirachy[0][checkindex][3] != -1:
-                    depth += 1
-                    checkindex = heirachy[0][checkindex][3]
-                if depth > maxdepth:
-                    maxdepth = depth
-                cindex += 1
-            #if (maxdepth % 2) != 0:
-            #    continue
-            #wcopy = warp.copy()
-            wcopy = cv2.cvtColor(warp,cv2.COLOR_GRAY2RGB)
-            iswhite = 1
-            print("maxd " + str(maxdepth))            
-            for lvl in range(0, maxdepth+1):
-                if (lvl % 2) or maxdepth == 1:
-                    cindex = 0
-                    for acnt in thecnts:
-                        checkindex = cindex
-                        depth = 0
-                        while heirachy[0][checkindex][3] != -1:
-                            depth += 1
-                            checkindex = heirachy[0][checkindex][3]
-                        if depth == lvl:
-                            if iswhite:
-                                cv2.fillPoly(wcopy, [acnt], (255, 255, 255))
-                            else:
-                                cv2.fillPoly(wcopy, [acnt], (0, 255, 0))
-                        cindex += 1
-                    iswhite = not iswhite
-            
-            (thresh, bg) = cv2.threshold(wcopy, 254, 255, cv2.THRESH_BINARY)
-            cv2.imshow("edges", bg)
-            cv2.waitKey()   
-            #wcopy = cv2.cvtColor(warp,cv2.COLOR_GRAY2RGB)
-            #cindex = 0
-            #for acnt in thecnts:
-            #    depth = 0
-            #    checkindex = cindex
-            #    while heirachy[0][checkindex][3] != -1:
-            #        depth += 1
-            #        checkindex = heirachy[0][checkindex][3]
-            #    white = (depth % 2)                    
-            #    if (depth == 1):
-            #        if white:
-            #            cv2.fillPoly(wcopy, [acnt], (255, 255, 255))
-            #        else:
-            #            cv2.fillPoly(wcopy, [acnt], (0, 0, 0))
-            #        #cv2.drawContours(wcopy, [acnt], 0, (0, 255, 0), 3)
-            #        #                
-            #    cindex += 1
-            #cv2.imshow("edges", wcopy)
-            #cv2.waitKey()   
-            #cindex = 0
-            #for acnt in thecnts:
-            #    depth = 0
-            #    checkindex = cindex
-            #    while heirachy[0][checkindex][3] != -1:
-            #        depth += 1
-            #        checkindex = heirachy[0][checkindex][3]   
-            #    white = not (depth % 2)                 
-            #    if (depth == 3):
-            #        if white:
-            #            cv2.fillPoly(wcopy, [acnt], (255, 255, 255))
-            #        else:
-            #            cv2.fillPoly(wcopy, [acnt], (0, 0, 0))
-            #        #cv2.drawContours(wcopy, [acnt], 0, (0, 255, 0), 3)
-            #        #                
-            #    cindex += 1
-            #cv2.imshow("edges2", wcopy)
-            #cv2.waitKey()           
-
-            #adat = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 4001, 2)
-            #cv2.imshow("adat", adat)
-            #cv2.waitKey()
-        #cv2.imshow("bg ", bg)
-        #cv2.waitKey()
-        if laststart == 16:
-            #cv2.imshow('warp', warp)
-            #cv2.waitKey()
-            #cv2.imshow("bg ", bg)
-            #cv2.waitKey()
-            (thresh, alt) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
-            bg = alt 
-            #cv2.imshow("alt ", alt)
-            #cv2.waitKey()
-                   
-
+        cv2.imshow('adaptive', bg)
+        cv2.waitKey()
         
         # remove frame
         x = 0
