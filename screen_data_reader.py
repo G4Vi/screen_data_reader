@@ -32,11 +32,9 @@ SOFTWARE.
 import cv2
 import numpy as np
 import sys, getopt, os, time
-import zlib
+import zlib # crc32
 import mss
-import statistics
 from multiprocessing import Pool
-from matplotlib import pyplot as plt
 print(cv2.__version__)
 
 wexpt = 75
