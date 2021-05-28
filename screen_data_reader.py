@@ -33,49 +33,12 @@ import cv2
 import numpy as np
 import sys, getopt, os, time
 import zlib # crc32
-import mss
-from multiprocessing import Pool
-print(cv2.__version__)
 
 wexpt = 75
 worg = 77
 hexpt = 49
 horg = 51
 ratioorg = worg/horg
-
-INFILE = ''
-OUTFILE = ''
-OUTDIR  = ''
-
-def usage(code):
-    print('screen_data_reader.py -o <outputfile>')
-    print('screen_data_reader.py -d <outputdir>')
-    sys.exit(code)
-
-argv = sys.argv[1:]
-try:
-    opts, args = getopt.getopt(argv,"hi:o:d:",["help", "infile=", "outfile=","outdir="])
-except getopt.GetoptError:        
-    usage(2)
-for opt, arg in opts:
-    if opt in ("-h", "--help"):
-        usage(0)
-    elif opt in ("-i", "--infile"):
-        INFILE = arg
-    elif opt in ("-o", "--outfile"):
-        OUTFILE = arg
-    elif opt in ("-d", "--outdir"):
-        OUTDIR = arg    
-if INFILE == '':
-    usage(2)
-
-print("ratioorg " + str(ratioorg))
-sct = mss.mss()
-# Part of the screen to capture
-mon = sct.monitors[2]
-monitor = {"top": mon["top"], "left": mon["left"], "width": 1920, "height": 1080, "mon" : mon}
-smallest = 255
-largest = 0
 
 def decodeImage(image, laststart):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
@@ -347,40 +310,10 @@ def decodeImage(image, laststart):
         #if decoded:
         #    return decoded
 
-
-#image = cv2.imread("test_images/box2.png")
-#image = cv2.imread("test_images/boxbad.jpg")
-#image = cv2.imread("test_images/unmodified3.PNG")
-#image = cv2.imread("test_images/real4.PNG")
-#image = cv2.imread("test_images/header.PNG")
-#image = cv2.imread("test_images/ss.PNG")
-
-#results = [None]
-results = 0
-#while True:
-#    image = np.array(sct.grab(monitor))
-#    #cv2.imshow("Image", image)
-#    #cv2.waitKey()
-#    result = decodeImage(image)
-#    if type(result) == list:
-#        # initialize to endindex+1 elements
-#        if isinstance(results, int):
-#            results = [None] * (result[1]+1)
-#        if not results[result[0]]:
-#            print("frame: " + str(result[0]))
-#            results[result[0]] = result[2]
-#            if results.count(None) == 0:
-#                break
-#    if type(results) == list:
-#        for i in results:
-#            print('isNone ' + str(i is None))
-
-acap = cv2.VideoCapture(INFILE)
-no_of_frames = int(acap.get(cv2.CAP_PROP_FRAME_COUNT))
-acap.release()   
-frame_jump_unit = no_of_frames
-def processFrames(group_number):
-    cap = cv2.VideoCapture(INFILE)
+def processFrames(filename, group_number, frame_jump_unit=-1):
+    cap = cv2.VideoCapture(filename)
+    if frame_jump_unit == -1:
+        frame_jump_unit = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_jump_unit * group_number)
     proc_frames = -1
     results = []
@@ -400,11 +333,15 @@ def processFrames(group_number):
         results.append(result)
     return results
 
-if __name__ == '__main__':    
+def fromFile(filename):
+    acap = cv2.VideoCapture(filename)
+    no_of_frames = int(acap.get(cv2.CAP_PROP_FRAME_COUNT))
+    acap.release()   
+        
     start_time = time.time()
     
     # single process
-    resultspart = processFrames(0)
+    resultspart = processFrames(filename, 0)
     if not resultspart:
         print('didnt get results')
         sys.exit(1)
@@ -464,7 +401,38 @@ if __name__ == '__main__':
     else:
         print('crc32 mismatch, calculated 0x%X expected 0x%X' %(calccrc32, indatacrc32))
         sys.exit(1)
+    return [filename, thedata]
+
+
+if __name__ == '__main__':
+    print('screen_data_reader: opencv version: ' + cv2.__version__)
+
+    def usage(code):
+        print('screen_data_reader.py -o <outputfile>')
+        print('screen_data_reader.py -d <outputdir>')
+        sys.exit(code)
     
+    argv = sys.argv[1:]
+    INFILE = ''
+    OUTFILE = ''
+    OUTDIR  = ''
+    try:
+        opts, args = getopt.getopt(argv,"hi:o:d:",["help", "infile=", "outfile=","outdir="])
+    except getopt.GetoptError:        
+        usage(2)
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage(0)
+        elif opt in ("-i", "--infile"):
+            INFILE = arg
+        elif opt in ("-o", "--outfile"):
+            OUTFILE = arg
+        elif opt in ("-d", "--outdir"):
+            OUTDIR = arg    
+    if INFILE == '':
+        usage(2)
+    
+    filename, thedata = fromFile(INFILE)    
     path = ''
     if OUTFILE != '':
         path = OUTFILE

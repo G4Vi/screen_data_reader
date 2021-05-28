@@ -11,7 +11,7 @@ The psx appears to be too slow to generate QR codes in realtime, so this was cre
 
 `git clone` and `cd ` repo.
 
-Create venv `$ python3 -m venv .env`
+Create venv `$ python3 -m venv .venv`
 
 Activate venv `$ source .venv/bin/activate`
 
