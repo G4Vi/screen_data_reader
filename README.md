@@ -19,6 +19,8 @@ Update pip `(.venv)$ pip install --upgrade pip`
 
 Install requirements `(.venv)$ pip install -r requirements.txt`
 
+For reading from windows on Windows, `pip install pywin32`
+
 ## Run
 
 outside env: `$ ./screen_data_reader.sh`

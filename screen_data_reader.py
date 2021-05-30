@@ -278,7 +278,6 @@ def decodeImage(image, laststart):
             databytes = readbytes[6:(packetsize+6)]
             #print('startindex ' + str(startindex) + ' crc32 ' + str(hex(calcchk)))
             #print(databytes)
-            #sys.exit(1)
             return {'startindex' : startindex, 'endindex' : endindex, 'crc32' : calcchk, 'data' : databytes}
         
         decoded = decode_bits(mybits)
@@ -343,8 +342,7 @@ def fromFile(filename):
     # single process
     resultspart = processFrames(filename, 0)
     if not resultspart:
-        print('didnt get results')
-        sys.exit(1)
+        raise Exception("Failed to find any data")
     resultsone = resultspart
     
     # multiprocess. so far not faster
@@ -379,16 +377,15 @@ def fromFile(filename):
             gotnone = 1
         resulti += 1
     if gotnone:
-        sys.exit(1)
+        raise Exception("Missing frame(s) of data")
     
     # the firstframe just has the filename
     undecfilename = results.pop(0)
     try:
         filename = undecfilename.decode("utf-8")
     except:
-        print('failed to decode filename:')
-        print(undecfilename)
-        sys.exit(1)
+        raise Exception("Failed to decode filename: " + undecfilename)
+
     # the lastframe just has the data crc32 in little endian 
     indatacrc32arr = results.pop();
     indatacrc32 = indatacrc32arr[0]| (indatacrc32arr[1] << 8) | (indatacrc32arr[2] << 16) | (indatacrc32arr[3] << 24)
@@ -399,10 +396,44 @@ def fromFile(filename):
     if calccrc32 == indatacrc32:
         print('crc32 0x%X' % calccrc32)
     else:
-        print('crc32 mismatch, calculated 0x%X expected 0x%X' %(calccrc32, indatacrc32))
-        sys.exit(1)
+        raise Exception('crc32 mismatch, calculated 0x%X expected 0x%X' %(calccrc32, indatacrc32))
     return [filename, thedata]
 
+def fromWindow(titlesubstring):
+    titlesubstring = titlesubstring.lower()
+    targetrect = None
+    platform = sys.platform
+    if platform == "win32":
+        import win32gui
+
+        lparam = {
+            'substring' : titlesubstring            
+        }
+        def callback(hwnd, lparam):            
+            if 'rect' in  lparam:
+                return
+            winname = win32gui.GetWindowText(hwnd)
+            winname = winname.lower()
+            print('winname' + winname)
+            print(lparam)
+            if winname.find(lparam["substring"]) != -1:
+                rect = win32gui.GetWindowRect(hwnd)
+                lparam["rect"] = rect   
+                x = rect[0]
+                y = rect[1]
+                w = rect[2] - x
+                h = rect[3] - y            
+                print("Window %s:" % winname)
+                print("\tLocation: (%d, %d)" % (x, y))
+                print("\t    Size: (%d, %d)" % (w, h))
+
+        win32gui.EnumWindows(callback, lparam)
+        if lparam["rect"]:
+            targetrect = lparam["rect"]
+    
+    if not targetrect:
+        raise Exception("Failed to find window to record")
+    raise Exception("ENOTIMPLEMENTED")
 
 if __name__ == '__main__':
     print('screen_data_reader: opencv version: ' + cv2.__version__)
@@ -414,10 +445,11 @@ if __name__ == '__main__':
     
     argv = sys.argv[1:]
     INFILE = ''
+    INWINDOWTILE = ''
     OUTFILE = ''
     OUTDIR  = ''
     try:
-        opts, args = getopt.getopt(argv,"hi:o:d:",["help", "infile=", "outfile=","outdir="])
+        opts, args = getopt.getopt(argv,"hi:w:o:d:",["help", "infile=", "inwindowtitle=", "outfile=","outdir="])
     except getopt.GetoptError:        
         usage(2)
     for opt, arg in opts:
@@ -425,14 +457,20 @@ if __name__ == '__main__':
             usage(0)
         elif opt in ("-i", "--infile"):
             INFILE = arg
+        elif opt in ("-w", "--inwindowtitle"):
+            INWINDOWTILE = arg
         elif opt in ("-o", "--outfile"):
             OUTFILE = arg
         elif opt in ("-d", "--outdir"):
             OUTDIR = arg    
-    if INFILE == '':
+    if (INFILE == '') and (INWINDOWTILE == ''):
         usage(2)
-    
-    filename, thedata = fromFile(INFILE)    
+    filename = ''
+    thedata = ''
+    if INFILE != '':
+        filename, thedata = fromFile(INFILE)
+    else:
+        filename, thedata = fromWindow(INWINDOWTILE)    
     path = ''
     if OUTFILE != '':
         path = OUTFILE
@@ -442,7 +480,5 @@ if __name__ == '__main__':
         path = filename
     print("dumping to " + path)
     f = open(path, "wb")
-    #for buf in results:
-    #    f.write(buf)
     f.write(thedata)
     f.close()
