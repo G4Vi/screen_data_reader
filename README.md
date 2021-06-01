@@ -23,6 +23,10 @@ Install requirements `(.venv)$ pip install -r requirements.txt`
 
 Also `pip install mss pywin32`
 
+### For capturing from X11 desktop in addition to reading from video
+
+Also `pip install mss xlib`
+
 ## Run
 
 outside env: `$ ./screen_data_reader.sh`

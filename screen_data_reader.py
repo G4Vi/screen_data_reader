@@ -195,7 +195,6 @@ def decodeImage(image, laststart):
         # read the bits
         mybits = []
         if (int((hexpt-0.5)*hscale) >= len(roi)) or (int((wexpt-0.5)*wscale) >= len(roi[0])):
-            print("image too small")
             return
         for ypix in range(0, hexpt):
             acty = int((ypix + 0.5)*hscale)         
@@ -332,35 +331,7 @@ def processFrames(filename, group_number, frame_jump_unit=-1):
         results.append(result)
     return results
 
-def fromFile(filename):
-    acap = cv2.VideoCapture(filename)
-    no_of_frames = int(acap.get(cv2.CAP_PROP_FRAME_COUNT))
-    acap.release()   
-        
-    start_time = time.time()
-    
-    # single process
-    resultspart = processFrames(filename, 0)
-    if not resultspart:
-        raise Exception("Failed to find any data")
-    resultsone = resultspart
-    
-    # multiprocess. so far not faster
-    #with Pool(4) as p:
-    #    multipleresults = p.map(processFrames, range(4))
-    #multfcount = multipleresults[0][0]['endindex']+1;
-    #resultsone = [None] *multfcount
-    #for mresult in multipleresults:
-    #    for minner in mresult:
-    #        if not resultsone[minner['startindex']]:
-    #            resultsone[minner['startindex']] = minner
-            
-    
-    end_time = time.time()
-    total_processing_time = end_time - start_time
-    print("Time taken: {}".format(total_processing_time))
-    print("FPS : {}".format(no_of_frames/total_processing_time))
-    
+def handleResults(resultsone):
     numframes = resultsone[0]['endindex']+1
     results = [None] * (numframes)
     resulti = 0
@@ -399,11 +370,44 @@ def fromFile(filename):
         raise Exception('crc32 mismatch, calculated 0x%X expected 0x%X' %(calccrc32, indatacrc32))
     return [filename, thedata]
 
+def fromFile(filename):
+    acap = cv2.VideoCapture(filename)
+    no_of_frames = int(acap.get(cv2.CAP_PROP_FRAME_COUNT))
+    acap.release()   
+        
+    start_time = time.time()
+    
+    # single process
+    resultspart = processFrames(filename, 0)
+    if not resultspart:
+        raise Exception("Failed to find any data")
+    resultsone = resultspart
+    
+    # multiprocess. so far not faster
+    #with Pool(4) as p:
+    #    multipleresults = p.map(processFrames, range(4))
+    #multfcount = multipleresults[0][0]['endindex']+1;
+    #resultsone = [None] *multfcount
+    #for mresult in multipleresults:
+    #    for minner in mresult:
+    #        if not resultsone[minner['startindex']]:
+    #            resultsone[minner['startindex']] = minner
+            
+    
+    end_time = time.time()
+    total_processing_time = end_time - start_time
+    print("Time taken: {}".format(total_processing_time))
+    print("FPS : {}".format(no_of_frames/total_processing_time))
+    return handleResults(resultsone)
+    
+
 def fromWindow(titlesubstring):
     import mss
     sct = mss.mss()
+
+    # find the target window to record
     titlesubstring = titlesubstring.lower()
-    targetrect = None
+    targetgeom = None
     platform = sys.platform
     if platform == "win32":
         import win32gui
@@ -430,11 +434,36 @@ def fromWindow(titlesubstring):
 
         win32gui.EnumWindows(callback, lparam)
         if lparam["rect"]:
-            targetrect = lparam["rect"]
-    
-    if not targetrect:
+            targetgeom = [lparam["rect"][0], lparam["rect"][1], lparam["rect"][2] - lparam["rect"][0], lparam["rect"][3] - lparam["rect"][1]]
+    else:
+        from Xlib import display
+        d = display.Display()
+        root = d.screen().root
+        # query = root.query_tree() # _NET_CLIENT_LIST returns more useful results
+        clients = root.get_full_property(d.intern_atom('_NET_CLIENT_LIST'), 0, 9001)
+        for cid in clients.value:
+            client = d.create_resource_object('window', cid)
+            clientname = client.get_wm_name()
+            if not clientname:
+                continue
+            print('clientname: ' + clientname)
+            clientname = clientname.lower()
+            if clientname.find(titlesubstring) != -1:
+                # geometry is relative to parent window so traverse up to determine absolute coordinates
+                geom = client.get_geometry()
+                while client.id != root.id:
+                    client = client.query_tree().parent
+                    pgeom = client.get_geometry()
+                    geom.x += pgeom.x
+                    geom.y += pgeom.y
+                targetgeom = [geom.x, geom.y, geom.width, geom.height]                
+                break        
+        d.close()
+    if not targetgeom:
         raise Exception("Failed to find window to record")
-    monitor = {"top" : targetrect[1], "left" : targetrect[0], "width" : targetrect[2] -targetrect[0] , "height" : targetrect[3]-targetrect[1]}
+    
+    # capture from the window and decode the data
+    monitor = {"top" : targetgeom[1], "left" : targetgeom[0], "width" : targetgeom[2] , "height" : targetgeom[3]}
     laststart = 0
     results = []
     while True:
@@ -446,18 +475,16 @@ def fromWindow(titlesubstring):
             continue
         if len(results) == 0:
             results = [None] * (result['endindex']+1)
-        elif result['startindex'] == results[-1]['startindex']:
+        elif results[result['startindex']]:
             continue
         laststart = result['startindex']
-        print('append frame ' + str(result['startindex']) + ' endindex ' + str(result['endindex']) )
-        #results.append(result)
+        print('append frame ' + str(result['startindex']) + ' endindex ' + str(result['endindex']) )       
         results[result['startindex']] = result
         if results.count(None) == 0:
             break
-    raise Exception("ENOTIMPLEMENTED")      
-    return results
-
-   
+    
+    # decode the filename and combine the data
+    return handleResults(results)
 
 if __name__ == '__main__':
     print('screen_data_reader: opencv version: ' + cv2.__version__)
@@ -502,7 +529,7 @@ if __name__ == '__main__':
         path = os.path.join(OUTDIR, filename)
     else:
         path = filename
-    print("dumping to " + path)
+    print("saving to " + path)
     f = open(path, "wb")
     f.write(thedata)
     f.close()

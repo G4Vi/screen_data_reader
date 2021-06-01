@@ -10,6 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "args": ["--infile", "test_videos/fastdark.mp4"],
+            //"args": ["--inwindowtitle", "online"],
             "console": "integratedTerminal"
         }
     ]
