@@ -400,6 +400,8 @@ def fromFile(filename):
     return [filename, thedata]
 
 def fromWindow(titlesubstring):
+    import mss
+    sct = mss.mss()
     titlesubstring = titlesubstring.lower()
     targetrect = None
     platform = sys.platform
@@ -414,8 +416,7 @@ def fromWindow(titlesubstring):
                 return
             winname = win32gui.GetWindowText(hwnd)
             winname = winname.lower()
-            print('winname' + winname)
-            print(lparam)
+            #print('winname' + winname)
             if winname.find(lparam["substring"]) != -1:
                 rect = win32gui.GetWindowRect(hwnd)
                 lparam["rect"] = rect   
@@ -433,7 +434,30 @@ def fromWindow(titlesubstring):
     
     if not targetrect:
         raise Exception("Failed to find window to record")
-    raise Exception("ENOTIMPLEMENTED")
+    monitor = {"top" : targetrect[1], "left" : targetrect[0], "width" : targetrect[2] -targetrect[0] , "height" : targetrect[3]-targetrect[1]}
+    laststart = 0
+    results = []
+    while True:
+        image = np.array(sct.grab(monitor))
+        #cv2.imshow("Image", image)
+        #cv2.waitKey()
+        result = decodeImage(image, laststart)
+        if type(result) != dict:
+            continue
+        if len(results) == 0:
+            results = [None] * (result['endindex']+1)
+        elif result['startindex'] == results[-1]['startindex']:
+            continue
+        laststart = result['startindex']
+        print('append frame ' + str(result['startindex']) + ' endindex ' + str(result['endindex']) )
+        #results.append(result)
+        results[result['startindex']] = result
+        if results.count(None) == 0:
+            break
+    raise Exception("ENOTIMPLEMENTED")      
+    return results
+
+   
 
 if __name__ == '__main__':
     print('screen_data_reader: opencv version: ' + cv2.__version__)

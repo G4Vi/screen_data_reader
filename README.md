@@ -19,7 +19,9 @@ Update pip `(.venv)$ pip install --upgrade pip`
 
 Install requirements `(.venv)$ pip install -r requirements.txt`
 
-For reading from windows on Windows, `pip install pywin32`
+### For capturing from Windows desktop in addition to reading from video
+
+Also `pip install mss pywin32`
 
 ## Run
 
