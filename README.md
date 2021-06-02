@@ -37,3 +37,6 @@ See `--help` . By default the filename provided by psx_screen_dumper is used and
 
 ## License
 MIT, see `LICENSE`
+
+## Basic web app
+Run `basic_server/server.py` and navigate to `http://127.0.0.1:8080`

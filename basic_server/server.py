@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from http.server import BaseHTTPRequestHandler, HTTPServer
-#import urllib.parse
-#from urllib. import parse_qs
-#import time
 import cgi
+import sys, os
+scriptdir = os.path.dirname(__file__)
+sys.path.insert(0, scriptdir + "/..")
 import screen_data_reader
 
 hostName = "localhost"
