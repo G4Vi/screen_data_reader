@@ -370,6 +370,7 @@ def handleResults(resultsone):
         raise Exception('crc32 mismatch, calculated 0x%X expected 0x%X' %(calccrc32, indatacrc32))
     return [filename, thedata]
 
+# Read data from a video file
 def fromFile(filename):
     acap = cv2.VideoCapture(filename)
     no_of_frames = int(acap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -400,7 +401,7 @@ def fromFile(filename):
     print("FPS : {}".format(no_of_frames/total_processing_time))
     return handleResults(resultsone)
     
-
+# Read data from the screen
 def fromWindow(titlesubstring):
     import mss
     sct = mss.mss()
