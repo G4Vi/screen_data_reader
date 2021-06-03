@@ -487,6 +487,20 @@ def fromWindow(titlesubstring):
     # decode the filename and combine the data
     return handleResults(results)
 
+def fromBuf(thedata) :
+    from tempfile import mkstemp
+    fd, path = mkstemp()
+    print('mkstemp path ' + path)
+    with open(path, 'wb') as f:
+        f.write(thedata)
+    ret = fromFile(path)
+    os.close(fd)
+    os.remove(path)
+    return ret
+
+def fromStdin():
+    return fromBuf(sys.stdin.buffer.read())
+
 if __name__ == '__main__':
     print('screen_data_reader: opencv version: ' + cv2.__version__)
 
@@ -520,7 +534,10 @@ if __name__ == '__main__':
     filename = ''
     thedata = ''
     if INFILE != '':
-        filename, thedata = fromFile(INFILE)
+        if INFILE != '-':
+            filename, thedata = fromFile(INFILE)
+        else:
+            filename, thedata = fromStdin()
     else:
         filename, thedata = fromWindow(INWINDOWTILE)    
     path = ''

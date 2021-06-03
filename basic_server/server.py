@@ -31,33 +31,35 @@ class MyServer(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(bytes("<h1>Too much data, 100 MiB max</h1>", "utf-8"))
             return
-        ctype, pdict = cgi.parse_header(self.headers.get('Content-Type'))
+
+        # get the input data
+        ctype, pdict = cgi.parse_header(self.headers.get('Content-Type'))        
         if ctype == 'multipart/form-data':
             pdict["boundary"] = bytes(pdict["boundary"], "ascii") # embarrassing
             postvars = cgi.parse_multipart(self.rfile, pdict)
-        #self.data_string = self.rfile.read(int(self.headers['Content-Length']))
-        
-        # opencv doesn't allow VideoCapture from buf
-        tmpfilename = "uniquefilename.bin"
-        f = open(tmpfilename, "wb")
-        f.write(postvars["file"][0])
-        f.close()
-
-        # try to decode finally
-        try:
-            filename, thedata = screen_data_reader.fromFile(tmpfilename)
-            self.send_response(200)
-            self.send_header('Content-type', 'application/octet-stream')
-            self.send_header('Content-Disposition', 'attachment; filename="' + filename + '"')
+        else:
+            self.send_response(403)
+            self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(bytes(thedata))
-            return     
+            self.wfile.write(bytes("<h1>Not multipart/form-data</h1>", "utf-8"))
+            return
+        
+        # decode
+        try:
+            filename, thedata = screen_data_reader.fromBuf(postvars["file"][0])    
         except:
             self.send_response(200)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
             self.wfile.write(bytes("<h1>Failed to decode enough frames</h1>", "utf-8"))
-            return       
+            return
+        
+        # send response
+        self.send_response(200)
+        self.send_header('Content-type', 'application/octet-stream')
+        self.send_header('Content-Disposition', 'attachment; filename="' + filename + '"')
+        self.end_headers()
+        self.wfile.write(bytes(thedata))       
 
 if __name__ == "__main__":        
     webServer = HTTPServer((hostName, serverPort), MyServer)
