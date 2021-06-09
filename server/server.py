@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
-import os
+import sys, os
 import asyncio
 import aiohttp
 from aiohttp import web
+from aiohttp.web_exceptions import HTTPFound, HTTPTemporaryRedirect
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
-import time
 import secrets
-from aiohttp.helpers import content_disposition_header
-
-from aiohttp.web_exceptions import HTTPFound, HTTPTemporaryRedirect
-import sys
 import struct
 import pickle
 from enum import Enum
 
-async def root_handler(request):
-    return web.FileResponse('www/index.html')
-
 class WorkerMsg(Enum):
+    OUT    = 1
+    RESULT = 2
+
+class ClientMsg(Enum):
     OUT    = 1
     RESULT = 2
 
@@ -57,10 +54,6 @@ def worker_code(data, jobid):
     # send the response on the pipe to ensure it comes after the other messages
     sys.stdout.writeend.send({ 'jobid' : jobid, 'msgid' : WorkerMsg.RESULT, 'data' : toret})    
 
-async def client_cleanup(client, endtext):
-    await client["response"].write(bytes(endtext, 'utf-8'))
-    client["toalert"].set()
-
 async def StreamReader_recv_bytes(self, maxsize=None):
     # read the size
     buf = await self.readexactly(4)
@@ -97,7 +90,8 @@ async def handle_worker_messages(read):
             print(msg['data'], end='')
             data = bytes(msg['data'], 'utf-8')
             for client in job["clients"]:
-                await client["response"].write(data)
+                # shouldn't actually block ever
+                await client_write(client, ClientMsg.OUT, data)                
         elif msg['msgid'] == WorkerMsg.RESULT:
             endtext = '</pre> <a href="file?id=' + msg['jobid'] + '">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + msg['jobid'] + '"></iframe>'
             job["message"] = job["message"] + endtext
@@ -107,7 +101,9 @@ async def handle_worker_messages(read):
             clients = job["clients"]
             job["clients"] = []
             # notify existing clients about the results
-            await asyncio.gather(*[ client_cleanup(client, endtext) for client in clients])    
+            data = bytes(endtext, 'utf-8')
+            for client in clients:
+                asyncio.create_task(client_write(client, ClientMsg.RESULT, data))             
         else:
             print('unhandled message')
 
@@ -115,6 +111,23 @@ async def handle_worker_messages(read):
     transport.close()
     print('is task done')
 
+async def client_write(client, id, data):
+    await client['msgqueue'].put({'msgid' : id, 'data' : data})
+
+async def client_follow(job, response):
+    jobdone = "done" in job
+    msgqueue = asyncio.Queue()    
+    if not jobdone:
+        job["clients"].append({'msgqueue' : msgqueue})    
+    await response.write(job["message"].encode('utf-8'))
+    if jobdone:
+        return
+    # output the job's messages
+    while True:
+        msg = await msgqueue.get()
+        await response.write(msg['data'])
+        if msg['msgid'] == ClientMsg.RESULT:
+            break
 
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
@@ -128,15 +141,6 @@ async def screen_data_reader_handler(request):
     PPE.submit(worker_code, filedata, tok)   
     jobpath = "job?id=" + tok
     raise HTTPFound(location=jobpath)
-
-async def client_follow(job, response):
-    doneEvent = asyncio.Event()
-    if not "done" in job:
-        job["clients"].append({'response' : response, 'toalert': doneEvent})
-    else:
-        doneEvent.set()
-    await response.write(job["message"].encode('utf-8'))
-    return await doneEvent.wait()
 
 async def job_status_page(request):
     jobid = request.query['id'] 
@@ -158,6 +162,14 @@ async def file_requested(request):
     response = web.Response(body=job['file'][1],  headers={'Content-Disposition' : cd})
     return response
 
+async def root_handler(request):
+    return web.FileResponse('www/index.html')
+
+async def dumpworkitems():
+    while True:
+        print('qc ' + str(PPE._queue_count))
+        print('num work items ' + str(len(PPE._pending_work_items)))
+        await asyncio.sleep(1)
 
 async def main():
     global JOBS
@@ -171,7 +183,8 @@ async def main():
         asyncio.create_task(handle_worker_messages(worker[0]))
         writeendQueue.put(worker[1])
     global PPE
-    PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))     
+    PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))
+    #asyncio.create_task(dumpworkitems())    
         
     # launch the web server
     app = web.Application(client_max_size=114857600)
@@ -181,7 +194,6 @@ async def main():
     site = web.TCPSite(runner, 'localhost', 8080)
     await site.start()
     await asyncio.Event().wait()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
