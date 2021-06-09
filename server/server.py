@@ -10,18 +10,32 @@ import secrets
 from aiohttp.helpers import content_disposition_header
 
 from aiohttp.web_exceptions import HTTPFound, HTTPTemporaryRedirect
-
+import sys
 MAXWORKERS = 1
 
 async def root_handler(request):
     return web.FileResponse('www/index.html')
+
+class StdoutMpPipe:
+    def __init__(self, writeend):
+        self.writeend = writeend
+
+    def write(self,msg):
+        #self.writeend.send(msg)
+        msg = bytes(msg, 'utf-8')
+        self.writeend.send_bytes(msg)
+
+    def flush(self):
+        sys.__stdout__.flush()
 
 def worket_init(queueargs):
     import sys, io
     print('spawning worker ' + str(os.getpid()))
     # set stdout to the pipe 
     writeend = queueargs.get()
-    sys.stdout =  io.TextIOWrapper(os.fdopen(writeend, "wb", 0), write_through=True)
+    sys.stdout = StdoutMpPipe(writeend)
+    #sys.stdout =  io.TextIOWrapper(os.fdopen(writeend, "wb", 0), write_through=True)
+    #sys.stdout =  writeend
     # import the library
     scriptdir = os.path.dirname(__file__)
     sys.path.insert(0, scriptdir + "/..")
@@ -34,21 +48,37 @@ def worker_code(data, jobid):
     toret = screen_data_reader.fromBuf(data)
     return toret
 
+async def client_cleanup(client, endtext):
+    await client["response"].write(bytes(endtext, 'utf-8'))
+    client["toalert"].set()
+
 async def wait_for_worker_result(worker, jobid):
     print('waiting for ')
     print(worker)
     result = await worker
     print('worker done')
-    for client in JOBS[jobid]["clients"]:
-        await client["response"].write(bytes('</pre>', 'utf-8'))
-        await client["response"].write(bytes('<a href="file?id=' + jobid + '">' + result[0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + jobid + '"></iframe>', 'utf-8'))
-        client["toalert"].set()
-    JOBS[jobid]["clients"] = []
-    JOBS[jobid]["done"] = True
+
+    # job is done, setup the results
+    endtext = '</pre> <a href="file?id=' + jobid + '">' + result[0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + jobid + '"></iframe>'
+    JOBS[jobid]["message"] = JOBS[jobid]["message"] + endtext
     JOBS[jobid]["file"] = result
+    JOBS[jobid]["done"] = True
+    
+    
+    # job is done, no more active clients
+    clients = JOBS[jobid]["clients"]
+    JOBS[jobid]["clients"] = []
+
+    # notify existing clients about the results
+    await asyncio.gather(*[ client_cleanup(client, endtext) for client in clients]) 
+   
+   
+    
+    
 
 async def print_chld_stdout(read):
-    pipe = os.fdopen(read, mode='r')
+    #pipe = os.fdopen(read, mode='r')
+    pipe = read
     loop = asyncio.get_event_loop()
     stream_reader = asyncio.StreamReader()
     def protocol_factory():
@@ -62,16 +92,17 @@ async def print_chld_stdout(read):
         strtext = text.decode("utf-8")
         print('child ' + strtext, end='')
         for key in JOBS.keys():
-            for client in JOBS[key]["clients"]:
-                await client["response"].write(text)
             JOBS[key]["message"] = JOBS[key]["message"] + strtext
+            for client in JOBS[key]["clients"]:
+                await client["response"].write(text)            
     transport.close()
     print('is task done')
 
 
 WORKERPOOL = []
 for wi in range(0, MAXWORKERS):
-    WORKERPOOL.append(os.pipe())
+    #WORKERPOOL.append(os.pipe())
+    WORKERPOOL.append(mp.Pipe(duplex=False))
 writeendQueue = mp.Queue()
 [writeendQueue.put(i[1]) for i in WORKERPOOL]
 PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))
@@ -92,7 +123,7 @@ async def screen_data_reader_handler(request):
     jobpath = "job?id=" + tok
     raise HTTPFound(location=jobpath)
 
-async def job_listen(job, response):
+async def client_follow(job, response):
     doneEvent = asyncio.Event()
     if not "done" in job:
         job["clients"].append({'response' : response, 'toalert': doneEvent})
@@ -101,15 +132,13 @@ async def job_listen(job, response):
     await response.write(job["message"].encode('utf-8'))
     return await doneEvent.wait()
 
-
-
 async def job_status_page(request):
     job = JOBS[request.query['id']]
     if not job:
         return web.Response(status=404, text='No job found')    
     response = web.StreamResponse(headers={'Content-Type': 'text/html'})
     await response.prepare(request)
-    await job_listen(job, response)   
+    await client_follow(job, response)   
     await response.write_eof()
     return response
 
@@ -134,7 +163,5 @@ async def main():
     await asyncio.Event().wait()
 
 
-
-
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
