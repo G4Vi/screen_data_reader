@@ -11,19 +11,24 @@ from aiohttp.helpers import content_disposition_header
 
 from aiohttp.web_exceptions import HTTPFound, HTTPTemporaryRedirect
 import sys
-MAXWORKERS = 1
+import struct
+import pickle
+from enum import Enum
 
 async def root_handler(request):
     return web.FileResponse('www/index.html')
 
+class WorkerMsg(Enum):
+    OUT    = 1
+    RESULT = 2
+
 class StdoutMpPipe:
     def __init__(self, writeend):
         self.writeend = writeend
+        self.jobid = '-1'
 
     def write(self,msg):
-        #self.writeend.send(msg)
-        msg = bytes(msg, 'utf-8')
-        self.writeend.send_bytes(msg)
+        self.writeend.send({ 'jobid' : self.jobid, 'msgid' : WorkerMsg.OUT, 'data' : msg})
 
     def flush(self):
         sys.__stdout__.flush()
@@ -31,11 +36,11 @@ class StdoutMpPipe:
 def worket_init(queueargs):
     import sys, io
     print('spawning worker ' + str(os.getpid()))
+    
     # set stdout to the pipe 
     writeend = queueargs.get()
     sys.stdout = StdoutMpPipe(writeend)
-    #sys.stdout =  io.TextIOWrapper(os.fdopen(writeend, "wb", 0), write_through=True)
-    #sys.stdout =  writeend
+
     # import the library
     scriptdir = os.path.dirname(__file__)
     sys.path.insert(0, scriptdir + "/..")
@@ -43,41 +48,37 @@ def worket_init(queueargs):
     import screen_data_reader
     
 
-def worker_code(data, jobid):   
+def worker_code(data, jobid):
+    sys.stdout.jobid = jobid   
     print('new job ' + str(jobid) + ' on ' + str(os.getpid()))    
     toret = screen_data_reader.fromBuf(data)
-    return toret
+    # ignore messages until the next job
+    sys.stdout.jobid = '-1'
+    # send the response on the pipe to ensure it comes after the other messages
+    sys.stdout.writeend.send({ 'jobid' : jobid, 'msgid' : WorkerMsg.RESULT, 'data' : toret})    
 
 async def client_cleanup(client, endtext):
     await client["response"].write(bytes(endtext, 'utf-8'))
     client["toalert"].set()
 
-async def wait_for_worker_result(worker, jobid):
-    print('waiting for ')
-    print(worker)
-    result = await worker
-    print('worker done')
+async def StreamReader_recv_bytes(self, maxsize=None):
+    # read the size
+    buf = await self.readexactly(4)
+    size, = struct.unpack("!i", buf)
+    if size == -1:
+        buf = self.readexactly(8)
+        size, = struct.unpack("!Q", buf)
+    if maxsize is not None and size > maxsize:
+        return None
+    # read the message
+    return await self.readexactly(size)
 
-    # job is done, setup the results
-    endtext = '</pre> <a href="file?id=' + jobid + '">' + result[0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + jobid + '"></iframe>'
-    JOBS[jobid]["message"] = JOBS[jobid]["message"] + endtext
-    JOBS[jobid]["file"] = result
-    JOBS[jobid]["done"] = True
-    
-    
-    # job is done, no more active clients
-    clients = JOBS[jobid]["clients"]
-    JOBS[jobid]["clients"] = []
-
-    # notify existing clients about the results
-    await asyncio.gather(*[ client_cleanup(client, endtext) for client in clients]) 
-   
-   
-    
+async def StreamReader_recv(self):
+    buf = await StreamReader_recv_bytes(self)
+    return pickle.loads(buf)
     
 
-async def print_chld_stdout(read):
-    #pipe = os.fdopen(read, mode='r')
+async def handle_worker_messages(read):
     pipe = read
     loop = asyncio.get_event_loop()
     stream_reader = asyncio.StreamReader()
@@ -86,27 +87,34 @@ async def print_chld_stdout(read):
 
     transport, _ = await loop.connect_read_pipe(protocol_factory, pipe)
     while True:
-        text = await stream_reader.readline()
-        if not text:
-            break
-        strtext = text.decode("utf-8")
-        print('child ' + strtext, end='')
-        for key in JOBS.keys():
-            JOBS[key]["message"] = JOBS[key]["message"] + strtext
-            for client in JOBS[key]["clients"]:
-                await client["response"].write(text)            
+        msg = await StreamReader_recv(stream_reader)
+        if not msg['jobid'] in JOBS:
+            print('Unknown jobid')
+            continue
+        job = JOBS[msg['jobid']]
+        if msg['msgid'] == WorkerMsg.OUT:
+            job['message'] = job['message'] + msg['data']
+            print(msg['data'], end='')
+            data = bytes(msg['data'], 'utf-8')
+            for client in job["clients"]:
+                await client["response"].write(data)
+        elif msg['msgid'] == WorkerMsg.RESULT:
+            endtext = '</pre> <a href="file?id=' + msg['jobid'] + '">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + msg['jobid'] + '"></iframe>'
+            job["message"] = job["message"] + endtext
+            job["file"] = msg['data']
+            job["done"] = True    
+            # job is done, no more active clients
+            clients = job["clients"]
+            job["clients"] = []
+            # notify existing clients about the results
+            await asyncio.gather(*[ client_cleanup(client, endtext) for client in clients])    
+        else:
+            print('unhandled message')
+
+             
     transport.close()
     print('is task done')
 
-
-WORKERPOOL = []
-for wi in range(0, MAXWORKERS):
-    #WORKERPOOL.append(os.pipe())
-    WORKERPOOL.append(mp.Pipe(duplex=False))
-writeendQueue = mp.Queue()
-[writeendQueue.put(i[1]) for i in WORKERPOOL]
-PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))
-JOBS = {}
 
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
@@ -116,10 +124,8 @@ async def screen_data_reader_handler(request):
     filedata = post["file"].file.read()
     post["file"].file.close()
     tok = secrets.token_urlsafe()
-    worker = PPE.submit(worker_code, filedata, tok)
-    JOBS[tok] = { 'clients' : [], 'message' : '<pre>'}
-    worker = asyncio.wrap_future(worker)    
-    asyncio.create_task(wait_for_worker_result(worker, tok))  
+    JOBS[tok] = { 'clients' : [], 'message' : '<pre>'}   
+    PPE.submit(worker_code, filedata, tok)   
     jobpath = "job?id=" + tok
     raise HTTPFound(location=jobpath)
 
@@ -133,9 +139,10 @@ async def client_follow(job, response):
     return await doneEvent.wait()
 
 async def job_status_page(request):
-    job = JOBS[request.query['id']]
-    if not job:
-        return web.Response(status=404, text='No job found')    
+    jobid = request.query['id'] 
+    if not jobid in JOBS:
+        return web.Response(status=404, text='No job found')
+    job = JOBS[jobid]   
     response = web.StreamResponse(headers={'Content-Type': 'text/html'})
     await response.prepare(request)
     await client_follow(job, response)   
@@ -143,19 +150,32 @@ async def job_status_page(request):
     return response
 
 async def file_requested(request):
-    job = JOBS[request.query['id']]
-    if not job or not 'file' in job:
-        return web.Response(status=404, text='No job found') 
+    jobid = request.query['id'] 
+    if not jobid in JOBS:
+        return web.Response(status=404, text='No job found')
+    job = JOBS[jobid]        
     cd = 'attachment; filename="' + job["file"][0] + '"'  
     response = web.Response(body=job['file'][1],  headers={'Content-Disposition' : cd})
     return response
 
-app = web.Application(client_max_size=114857600)
-app.add_routes([web.get('/', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/job', job_status_page), web.get('/file', file_requested), web.static('/', 'www')])
-#web.run_app(app)
+
 async def main():
-    for worker in WORKERPOOL:
-        asyncio.create_task(print_chld_stdout(worker[0]))     
+    global JOBS
+    JOBS = {}
+    MAXWORKERS = 1
+    
+    # create the worker pool    
+    writeendQueue = mp.Queue()
+    for wi in range(0, MAXWORKERS):
+        worker = mp.Pipe(duplex=False)
+        asyncio.create_task(handle_worker_messages(worker[0]))
+        writeendQueue.put(worker[1])
+    global PPE
+    PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))     
+        
+    # launch the web server
+    app = web.Application(client_max_size=114857600)
+    app.add_routes([web.get('/', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/job', job_status_page), web.get('/file', file_requested), web.static('/', 'www')])     
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', 8080)
