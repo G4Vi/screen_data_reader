@@ -19,14 +19,39 @@ class ClientMsg(Enum):
     OUT    = 1
     RESULT = 2
 
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
 class StdoutMpPipe:
+
+    def windowssend(self, obj):
+        pickled = pickle.dumps(obj)
+        n = len(pickled)
+        if n > 0x7FFFFFFF:
+            header = struct.pack("!i", -1)
+            header = header + struct.pack("!Q", n)
+        else:
+            header = struct.pack("!i", n)
+        self.writeend.send_bytes(header+pickled)
+
+    def unixsend(self, obj):
+        self.writeend.send(obj)
+
     def __init__(self, writeend):
         self.writeend = writeend
         self.jobid = '-1'
+        platform = sys.platform
+        # we send length header on windows too because of using StreamReader reading instead of multiprocessing.recv
+        if platform == "win32":                              
+            self.send = self.windowssend
+        else:       
+            self.send = self.unixsend
 
     def write(self,msg):
-        self.writeend.send({ 'jobid' : self.jobid, 'msgid' : WorkerMsg.OUT, 'data' : msg})
-
+        #self.writeend.send({ 'jobid' : self.jobid, 'msgid' : WorkerMsg.OUT, 'data' : msg})
+        self.send({ 'jobid' : self.jobid, 'msgid' : WorkerMsg.OUT, 'data' : msg})
+        
+        
     def flush(self):
         sys.__stdout__.flush()
 
@@ -52,7 +77,7 @@ def worker_code(data, jobid):
     # ignore messages until the next job
     sys.stdout.jobid = '-1'
     # send the response on the pipe to ensure it comes after the other messages
-    sys.stdout.writeend.send({ 'jobid' : jobid, 'msgid' : WorkerMsg.RESULT, 'data' : toret})    
+    sys.stdout.send({ 'jobid' : jobid, 'msgid' : WorkerMsg.RESULT, 'data' : toret})    
 
 async def StreamReader_recv_bytes(self, maxsize=None):
     # read the size
