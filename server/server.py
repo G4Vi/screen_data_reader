@@ -126,7 +126,7 @@ async def handle_worker_messages(read):
         elif msg['msgid'] == WorkerMsg.RESULT:
             if msg['data'] is not None:
                 job["file"] = msg['data']
-                endtext = '</pre> <a href="file?id=' + msg['jobid'] + '">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + msg['jobid'] + '"></iframe>'
+                endtext = '</pre> <a href="file">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file"></iframe>'
             else:
                 endtext = '</pre>'
             endtext += TMPLWWW['footer.html']
@@ -178,6 +178,10 @@ async def client_follow(job, response):
         if msg['msgid'] == ClientMsg.RESULT:
             break
 
+def bodyfirst(rootpath):
+    bf = TMPLWWW['body-first.html']
+    bf = bf.replace('$ROOTPATH', rootpath)
+    return bf
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
         return web.Response(status=413, text='<h1>Too much data, 100 MiB max</h1>', content_type='text/html')
@@ -186,16 +190,16 @@ async def screen_data_reader_handler(request):
     filedata = post["file"].file.read()
     post["file"].file.close()
     tok = secrets.token_urlsafe()
-    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + TMPLWWW['body-first.html']+'<h3>Job Output</h3><pre>', 'qp' : -1}
+    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3><pre>', 'qp' : -1}
     JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"   
     PPE.submit(worker_code, filedata, tok)
     JOBS[tok]['qp'] = len(PPE._pending_work_items)-1
     JOBS[tok]['message'] =  JOBS[tok]['message'] + 'queue position: ' + str(JOBS[tok]['qp']) + "\n"   
-    jobpath = "job?id=" + tok
+    jobpath = tok + "/job"
     raise HTTPFound(location=jobpath)
 
 async def job_status_page(request):
-    jobid = request.query['id'] 
+    jobid = request.match_info['jobid'] 
     if not jobid in JOBS:
         return web.Response(status=404, text='No job found')
     job = JOBS[jobid]   
@@ -206,7 +210,7 @@ async def job_status_page(request):
     return response
 
 async def file_requested(request):
-    jobid = request.query['id'] 
+    jobid = request.match_info['jobid'] 
     if not jobid in JOBS:
         return web.Response(status=404, text='No job found')
     job = JOBS[jobid]        
@@ -215,7 +219,7 @@ async def file_requested(request):
     return response
 
 async def root_handler(request):
-    return web.Response(text='<html><head><title>' + TMPLWWW['BASETITLE'] + '</title></head>' + TMPLWWW['body-first.html'] + TMPLWWW['index.html'] + TMPLWWW['footer.html'], content_type='text/html')
+    return web.Response(text='<html><head><title>' + TMPLWWW['BASETITLE'] + '</title></head>' + bodyfirst('.') + TMPLWWW['index.html'] + TMPLWWW['footer.html'], content_type='text/html')
 
 async def dumpworkitems():
     while True:
@@ -249,7 +253,7 @@ async def main():
         
     # launch the web server
     app = web.Application(client_max_size=114857600)
-    app.add_routes([web.get('/', root_handler), web.get('/index.htm', root_handler), web.get('/index.html', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/job', job_status_page), web.get('/file', file_requested), web.static('/', scriptdir+'/www')])     
+    app.add_routes([web.get('/', root_handler), web.get('/index.htm', root_handler), web.get('/index.html', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/{jobid}/job', job_status_page), web.get('/{jobid}/file', file_requested), web.static('/', scriptdir+'/www')])     
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', 8080)
