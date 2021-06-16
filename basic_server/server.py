@@ -21,7 +21,7 @@ class MyServer(BaseHTTPRequestHandler):
         self.wfile.write(bytes("<input type=\"file\" id=\"myFile\" name=\"file\">", "utf-8"))
         self.wfile.write(bytes("<input type=\"submit\" value=\"Upload\">", "utf-8"))
         self.wfile.write(bytes("</form>", "utf-8"))
-        self.wfile.write(bytes("</body></html>", "utf-8"))
+        self.wfile.write(bytes('<footer><p><a href="https://github.com/G4Vi/screen_data_reader">Screen Data Reader Github</a> | 2021 <a href="https://github.com/G4Vi">G4Vi</a></p></footer></body></html>', "utf-8"))
     
     def do_POST(self):
         cl = int(self.headers['Content-Length'])

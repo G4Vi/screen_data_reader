@@ -1,3 +1,4 @@
 dump/*
 !dump/DO_NOT_DELETE.md
 .venv/*
+__pycache__/*

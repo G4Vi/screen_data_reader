@@ -38,5 +38,9 @@ See `--help` . By default the filename provided by psx_screen_dumper is used and
 ## License
 MIT, see `LICENSE`
 
-## Basic web app
+## Running web app instance
+
+`pip install aiohttp`, run `server/server.py` and navigate to `http://127.0.0.1:8080`
+
+## Running basic web app instance
 Run `basic_server/server.py` and navigate to `http://127.0.0.1:8080`

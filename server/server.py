@@ -69,11 +69,15 @@ def worket_init(queueargs):
     global screen_data_reader
     import screen_data_reader
     
-
 def worker_code(data, jobid):
     sys.stdout.jobid = jobid   
-    print('new job ' + str(jobid) + ' on ' + str(os.getpid()))    
-    toret = screen_data_reader.fromBuf(data)
+    print('running job on ' + str(os.getpid()))
+    try:
+        toret = screen_data_reader.fromBuf(data)
+    except Exception as e:
+        print(e.args[0])
+        print("Job failed, make sure your video is focused with good lighting and the data patterns have the correct aspect ratio!")
+        toret = None
     # ignore messages until the next job
     sys.stdout.jobid = '-1'
     # send the response on the pipe to ensure it comes after the other messages
@@ -111,6 +115,8 @@ async def handle_worker_messages(read):
             continue
         job = JOBS[msg['jobid']]
         if msg['msgid'] == WorkerMsg.OUT:
+            if 'qp' in job:
+                job.pop('qp')            
             job['message'] = job['message'] + msg['data']
             print(msg['data'], end='')
             data = bytes(msg['data'], 'utf-8')
@@ -118,10 +124,28 @@ async def handle_worker_messages(read):
                 # shouldn't actually block ever
                 await client_write(client, ClientMsg.OUT, data)                
         elif msg['msgid'] == WorkerMsg.RESULT:
-            endtext = '</pre> <a href="file?id=' + msg['jobid'] + '">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + msg['jobid'] + '"></iframe>'
+            if msg['data'] is not None:
+                job["file"] = msg['data']
+                endtext = '</pre> <a href="file?id=' + msg['jobid'] + '">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file?id=' + msg['jobid'] + '"></iframe>'
+            else:
+                endtext = '</pre>'
+            endtext += TMPLWWW['footer.html']
             job["message"] = job["message"] + endtext
-            job["file"] = msg['data']
-            job["done"] = True    
+            job["done"] = True
+
+            # update queue positions
+            for jid in JOBS:
+                # if there's no queue position job is running or has run
+                jb = JOBS[jid]
+                if not 'qp' in jb:
+                    continue
+                jb['qp'] = jb['qp'] - 1
+                qpmsg = 'queue position: ' + str(jb['qp']) + "\n"
+                jb['message'] = jb['message'] + qpmsg
+                for client in jb["clients"]:
+                    # shouldn't actually block ever
+                    await client_write(client, ClientMsg.OUT, bytes(qpmsg, 'utf-8'))  
+
             # job is done, no more active clients
             clients = job["clients"]
             job["clients"] = []
@@ -162,8 +186,11 @@ async def screen_data_reader_handler(request):
     filedata = post["file"].file.read()
     post["file"].file.close()
     tok = secrets.token_urlsafe()
-    JOBS[tok] = { 'clients' : [], 'message' : '<pre>'}   
-    PPE.submit(worker_code, filedata, tok)   
+    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + TMPLWWW['body-first.html']+'<h3>Job Output</h3><pre>', 'qp' : -1}
+    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"   
+    PPE.submit(worker_code, filedata, tok)
+    JOBS[tok]['qp'] = len(PPE._pending_work_items)-1
+    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'queue position: ' + str(JOBS[tok]['qp']) + "\n"   
     jobpath = "job?id=" + tok
     raise HTTPFound(location=jobpath)
 
@@ -188,7 +215,7 @@ async def file_requested(request):
     return response
 
 async def root_handler(request):
-    return web.FileResponse('www/index.html')
+    return web.Response(text='<html><head><title>' + TMPLWWW['BASETITLE'] + '</title></head>' + TMPLWWW['body-first.html'] + TMPLWWW['index.html'] + TMPLWWW['footer.html'], content_type='text/html')
 
 async def dumpworkitems():
     while True:
@@ -197,6 +224,15 @@ async def dumpworkitems():
         await asyncio.sleep(1)
 
 async def main():
+    global TMPLWWW
+    TMPLWWW = {'BASETITLE' : 'Screen Data Reader'}
+    scriptdir = os.path.dirname(__file__)
+    for entry in os.scandir(scriptdir + '/tmpl-www'):
+        print('tmplwww: ' + entry.path + ' name: ' + entry.name)
+        with open(entry.path, 'r') as file:
+            TMPLWWW[entry.name] = file.read()
+        
+    
     global JOBS
     JOBS = {}
     MAXWORKERS = 1
@@ -213,7 +249,7 @@ async def main():
         
     # launch the web server
     app = web.Application(client_max_size=114857600)
-    app.add_routes([web.get('/', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/job', job_status_page), web.get('/file', file_requested), web.static('/', 'www')])     
+    app.add_routes([web.get('/', root_handler), web.get('/index.htm', root_handler), web.get('/index.html', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/job', job_status_page), web.get('/file', file_requested), web.static('/', scriptdir+'/www')])     
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, 'localhost', 8080)
