@@ -6,7 +6,7 @@ scriptdir = os.path.dirname(__file__)
 sys.path.insert(0, scriptdir + "/..")
 import screen_data_reader
 
-hostName = "0.0.0.0"
+hostName = "localhost"
 serverPort = 8080
 
 class MyServer(BaseHTTPRequestHandler):
