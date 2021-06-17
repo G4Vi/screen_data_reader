@@ -100,7 +100,7 @@ async def StreamReader_recv(self):
     return pickle.loads(buf)
     
 
-async def handle_worker_messages(read):
+async def handle_worker_messages(read):    
     pipe = read
     loop = asyncio.get_event_loop()
     stream_reader = asyncio.StreamReader()
@@ -245,6 +245,8 @@ async def main():
     writeendQueue = mp.Queue()
     for wi in range(0, MAXWORKERS):
         worker = mp.Pipe(duplex=False)
+        # for race condtion starting pipe?
+        await asyncio.sleep(1)
         asyncio.create_task(handle_worker_messages(worker[0]))
         writeendQueue.put(worker[1])
     global PPE
@@ -256,7 +258,7 @@ async def main():
     app.add_routes([web.get('/', root_handler), web.get('/index.htm', root_handler), web.get('/index.html', root_handler), web.post('/screen_data_reader.py', screen_data_reader_handler), web.get('/{jobid}/job', job_status_page), web.get('/{jobid}/file', file_requested), web.static('/', scriptdir+'/www')])     
     runner = aiohttp.web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 8080)
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
     await asyncio.Event().wait()
 
