@@ -190,7 +190,10 @@ async def screen_data_reader_handler(request):
     filedata = post["file"].file.read()
     post["file"].file.close()
     tok = secrets.token_urlsafe()
-    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3><pre>', 'qp' : -1}
+    # send some padding data so the response is streamed (Firefox needs this)
+    paddata = 'a'*1024
+    padstr = '<div style="display:none;">' + paddata + '</div>'
+    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>', 'qp' : -1}
     JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"   
     PPE.submit(worker_code, filedata, tok)
     JOBS[tok]['qp'] = len(PPE._pending_work_items)-1

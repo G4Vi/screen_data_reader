@@ -42,5 +42,7 @@ MIT, see `LICENSE`
 
 `pip install aiohttp`, run `server/server.py` and navigate to `http://127.0.0.1:8080`
 
+See `server/README.md` for nginx reverse proxy setup
+
 ## Running basic web app instance
 Run `basic_server/server.py` and navigate to `http://127.0.0.1:8080`
