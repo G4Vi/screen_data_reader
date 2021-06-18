@@ -51,6 +51,7 @@ location / {
         proxy_pass_header Server;
         proxy_cache_bypass $http_upgrade;
         proxy_redirect off;
+        proxy_buffering off;
     }
 ``` 
 
