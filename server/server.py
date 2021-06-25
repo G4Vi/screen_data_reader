@@ -10,6 +10,7 @@ import secrets
 import struct
 import pickle
 from enum import Enum
+import subprocess
 
 class WorkerMsg(Enum):
     OUT    = 1
@@ -85,15 +86,23 @@ def worker_code(data, jobid):
 
 async def StreamReader_recv_bytes(self, maxsize=None):
     # read the size
-    buf = await self.readexactly(4)
+    try:
+        buf = await self.read(4)
+    except:
+        print('failed read size')
+        raise
     size, = struct.unpack("!i", buf)
     if size == -1:
-        buf = self.readexactly(8)
+        buf = self.read(8)
         size, = struct.unpack("!Q", buf)
     if maxsize is not None and size > maxsize:
         return None
     # read the message
-    return await self.readexactly(size)
+    try:
+        return await self.read(size)
+    except:
+        print('failed read message')
+        raise()
 
 async def StreamReader_recv(self):
     buf = await StreamReader_recv_bytes(self)
@@ -160,6 +169,65 @@ async def handle_worker_messages(read):
     transport.close()
     print('is task done')
 
+
+async def handle_job_messages(job, read):    
+    pipe = read
+    loop = asyncio.get_event_loop()
+    stream_reader = asyncio.StreamReader()
+    def protocol_factory():
+        return asyncio.StreamReaderProtocol(stream_reader)
+
+    transport, _ = await loop.connect_read_pipe(protocol_factory, pipe)
+    while True:
+        try:
+            msg = await StreamReader_recv(stream_reader)
+        except:
+            print('TASK FAILED')       
+        if msg['msgid'] == WorkerMsg.OUT:
+            if 'qp' in job:
+                job.pop('qp')            
+            job['message'] = job['message'] + msg['data']
+            print(msg['data'], end='')
+            data = bytes(msg['data'], 'utf-8')
+            for client in job["clients"]:
+                # shouldn't actually block ever
+                await client_write(client, ClientMsg.OUT, data)                
+        elif msg['msgid'] == WorkerMsg.RESULT:
+            if msg['data'] is not None:
+                job["file"] = msg['data']
+                endtext = '</pre> <a href="file">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file"></iframe>'
+            else:
+                endtext = '</pre>'
+            endtext += TMPLWWW['footer.html']
+            job["message"] = job["message"] + endtext
+            job["done"] = True
+
+            # update queue positions
+            for jid in JOBS:
+                # if there's no queue position job is running or has run
+                jb = JOBS[jid]
+                if not 'qp' in jb:
+                    continue
+                jb['qp'] = jb['qp'] - 1
+                qpmsg = 'queue position: ' + str(jb['qp']) + "\n"
+                jb['message'] = jb['message'] + qpmsg
+                for client in jb["clients"]:
+                    # shouldn't actually block ever
+                    await client_write(client, ClientMsg.OUT, bytes(qpmsg, 'utf-8'))  
+
+            # job is done, no more active clients
+            clients = job["clients"]
+            job["clients"] = []
+            # notify existing clients about the results
+            data = bytes(endtext, 'utf-8')
+            for client in clients:
+                asyncio.create_task(client_write(client, ClientMsg.RESULT, data))
+            break             
+        else:
+            print('unhandled message')             
+    transport.close()
+    print('job ' + job['id'] + ' task done')
+
 async def client_write(client, id, data):
     await client['msgqueue'].put({'msgid' : id, 'data' : data})
 
@@ -182,6 +250,26 @@ def bodyfirst(rootpath):
     bf = TMPLWWW['body-first.html']
     bf = bf.replace('$ROOTPATH', rootpath)
     return bf
+
+#async def screen_data_reader_handler(request):
+#    if request.content_length > 104857600:
+#        return web.Response(status=413, text='<h1>Too much data, 100 MiB max</h1>', content_type='text/html')
+#    post = await request.post()
+#
+#    filedata = post["file"].file.read()
+#    post["file"].file.close()
+#    tok = secrets.token_urlsafe()
+#    # send some padding data so the response is streamed (Firefox needs this)
+#    paddata = 'a'*1024
+#    padstr = '<div style="display:none;">' + paddata + '</div>'
+#    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>', 'qp' : -1}
+#    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"   
+#    PPE.submit(worker_code, filedata, tok)
+#    JOBS[tok]['qp'] = len(PPE._pending_work_items)-1
+#    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'queue position: ' + str(JOBS[tok]['qp']) + "\n"   
+#    jobpath = tok + "/job"
+#    raise HTTPFound(location=jobpath)
+
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
         return web.Response(status=413, text='<h1>Too much data, 100 MiB max</h1>', content_type='text/html')
@@ -193,10 +281,14 @@ async def screen_data_reader_handler(request):
     # send some padding data so the response is streamed (Firefox needs this)
     paddata = 'a'*1024
     padstr = '<div style="display:none;">' + paddata + '</div>'
-    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>', 'qp' : -1}
-    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"   
-    PPE.submit(worker_code, filedata, tok)
-    JOBS[tok]['qp'] = len(PPE._pending_work_items)-1
+    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>', 'qp' : -1, 'id': tok}
+    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"
+    scriptdir = os.path.dirname(__file__)
+    proc = subprocess.Popen([sys.executable, scriptdir+'/worker.py'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    asyncio.create_task(handle_job_messages(JOBS[tok], proc.stdout))
+    proc.stdin.write(filedata)
+    proc.stdin.close()
+    JOBS[tok]['qp'] = 0
     JOBS[tok]['message'] =  JOBS[tok]['message'] + 'queue position: ' + str(JOBS[tok]['qp']) + "\n"   
     jobpath = tok + "/job"
     raise HTTPFound(location=jobpath)
