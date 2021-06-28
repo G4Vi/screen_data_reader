@@ -337,15 +337,15 @@ async def main():
     MAXWORKERS = 1
     
     # create the worker pool    
-    writeendQueue = mp.Queue()
-    for wi in range(0, MAXWORKERS):
-        worker = mp.Pipe(duplex=False)
-        # for race condtion starting pipe?
-        await asyncio.sleep(1)
-        asyncio.create_task(handle_worker_messages(worker[0]))
-        writeendQueue.put(worker[1])
-    global PPE
-    PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))
+    #writeendQueue = mp.Queue()
+    #for wi in range(0, MAXWORKERS):
+    #    worker = mp.Pipe(duplex=False)
+    #    # for race condtion starting pipe?
+    #    await asyncio.sleep(1)
+    #    asyncio.create_task(handle_worker_messages(worker[0]))
+    #    writeendQueue.put(worker[1])
+    #global PPE
+    #PPE = ProcessPoolExecutor(max_workers=MAXWORKERS, initializer=worket_init, initargs=(writeendQueue,))
     #asyncio.create_task(dumpworkitems())    
         
     # launch the web server
