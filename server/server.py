@@ -25,19 +25,19 @@ def eprint(*args, **kwargs):
 async def StreamReader_recv_bytes(self, maxsize=None):
     # read the size
     try:
-        buf = await self.read(4)
+        buf = await self.readexactly(4)
     except:
         print('failed read size')
         raise
     size, = struct.unpack("!i", buf)
     if size == -1:
-        buf = self.read(8)
+        buf = await self.readexactly(8)
         size, = struct.unpack("!Q", buf)
     if maxsize is not None and size > maxsize:
         return None
     # read the message
     try:
-        return await self.read(size)
+        return await self.readexactly(size)
     except:
         print('failed read message')
         raise
@@ -53,7 +53,8 @@ async def handle_job_messages(job, stream_reader):
         try:
             msg = await StreamReader_recv(stream_reader)
         except:
-            print('TASK FAILED')       
+            print('TASK FAILED')
+            msg = {'msgid' : WorkerMsg.RESULT, 'data' : None}       
         if msg['msgid'] == WorkerMsg.OUT:
             if 'qp' in job:
                 job.pop('qp')            
@@ -67,8 +68,8 @@ async def handle_job_messages(job, stream_reader):
             if msg['data'] is not None:
                 job["file"] = msg['data']
                 endtext = '</pre> <a href="file">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file"></iframe>'
-            else:
-                endtext = '</pre>'
+            else:           
+                endtext = "JOB FAILED\n</pre>"
             endtext += TMPLWWW['footer.html']
             job["message"] = job["message"] + endtext
             job["done"] = True
@@ -127,8 +128,7 @@ async def run_job(job):
     print("running job " + job['id'])
     scriptdir = os.path.dirname(__file__)
 
-    #proc = subprocess.Popen([sys.executable, scriptdir+'/worker.py'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    proc = await asyncio.create_subprocess_exec(sys.executable, scriptdir+'/worker.py', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    proc = await asyncio.create_subprocess_exec(sys.executable, scriptdir+'/worker.py', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
 
     asyncio.create_task(handle_job_messages(job, proc.stdout))
     proc.stdin.write(job['filedata'])
