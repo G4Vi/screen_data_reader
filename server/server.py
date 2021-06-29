@@ -8,7 +8,6 @@ import secrets
 import struct
 import pickle
 from enum import Enum
-import subprocess
 from collections import deque
 
 class WorkerMsg(Enum):
@@ -21,7 +20,8 @@ class ClientMsg(Enum):
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
- 
+
+# inspired by multiprocessing.connection.Connection
 async def StreamReader_recv_bytes(self, maxsize=None):
     # read the size
     try:
@@ -42,19 +42,13 @@ async def StreamReader_recv_bytes(self, maxsize=None):
         print('failed read message')
         raise
 
+# inspired by multiprocessing.connection.Connection
 async def StreamReader_recv(self):
     buf = await StreamReader_recv_bytes(self)
     return pickle.loads(buf)
     
 
-async def handle_job_messages(job, read):    
-    pipe = read
-    loop = asyncio.get_event_loop()
-    stream_reader = asyncio.StreamReader()
-    def protocol_factory():
-        return asyncio.StreamReaderProtocol(stream_reader)
-
-    transport, _ = await loop.connect_read_pipe(protocol_factory, pipe)
+async def handle_job_messages(job, stream_reader):
     while True:
         try:
             msg = await StreamReader_recv(stream_reader)
@@ -102,7 +96,6 @@ async def handle_job_messages(job, read):
             break             
         else:
             print('unhandled message')             
-    transport.close()
     print('job ' + job['id'] + ' task done')
 
 async def client_write(client, id, data):
@@ -128,16 +121,30 @@ def bodyfirst(rootpath):
     bf = bf.replace('$ROOTPATH', rootpath)
     return bf
 
-def run_job(job):
+async def run_job(job):
     global NUM_CURRENT_WORKERS
     NUM_CURRENT_WORKERS = NUM_CURRENT_WORKERS + 1
     print("running job " + job['id'])
     scriptdir = os.path.dirname(__file__)
-    proc = subprocess.Popen([sys.executable, scriptdir+'/worker.py'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    #proc = subprocess.Popen([sys.executable, scriptdir+'/worker.py'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    proc = await asyncio.create_subprocess_exec(sys.executable, scriptdir+'/worker.py', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+
     asyncio.create_task(handle_job_messages(job, proc.stdout))
     proc.stdin.write(job['filedata'])
-    proc.stdin.close()
     del job['filedata']
+    await proc.stdin.drain()    
+    proc.stdin.close()
+    await proc.stdin.wait_closed()
+
+    await proc.wait()
+    NUM_CURRENT_WORKERS = NUM_CURRENT_WORKERS-1    
+    print('proc done')
+    if len(WORKERQUEUE) > 0:
+        job = WORKERQUEUE.popleft()
+        asyncio.create_task(run_job(job))
+
+    
 
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
@@ -164,7 +171,7 @@ async def screen_data_reader_handler(request):
  
     # the job queue is empty when not all workers are in use so just run the job
     if NUM_CURRENT_WORKERS < MAXWORKERS:        
-        run_job(JOBS[tok])
+        asyncio.create_task(run_job(JOBS[tok]))
     else:
     # otherwise enqueue the job
         print("not running job yet " + tok)
@@ -198,15 +205,17 @@ async def root_handler(request):
     return web.Response(text='<html><head><title>' + TMPLWWW['BASETITLE'] + '</title></head>' + bodyfirst('.') + TMPLWWW['index.html'] + TMPLWWW['footer.html'], content_type='text/html')
 
 async def main():
+    print('pid ' + str(os.getpid()))
+    # load in templates
     global TMPLWWW
     TMPLWWW = {'BASETITLE' : 'Screen Data Reader'}
     scriptdir = os.path.dirname(__file__)
     for entry in os.scandir(scriptdir + '/tmpl-www'):
         print('tmplwww: ' + entry.path + ' name: ' + entry.name)
         with open(entry.path, 'r') as file:
-            TMPLWWW[entry.name] = file.read()
-        
+            TMPLWWW[entry.name] = file.read()        
     
+    # setup JOB queue
     global JOBS
     JOBS = {}
     global MAXWORKERS
@@ -215,7 +224,6 @@ async def main():
     NUM_CURRENT_WORKERS = 0
     global WORKERQUEUE
     WORKERQUEUE = deque()
-
         
     # launch the web server
     app = web.Application(client_max_size=114857600)
