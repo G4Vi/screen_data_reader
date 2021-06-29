@@ -48,66 +48,15 @@ async def StreamReader_recv(self):
     return pickle.loads(buf)
     
 
-async def handle_job_messages(job, stream_reader):
-    while True:
-        try:
-            msg = await StreamReader_recv(stream_reader)
-        except:
-            print('TASK FAILED')
-            msg = {'msgid' : WorkerMsg.RESULT, 'data' : None}       
-        if msg['msgid'] == WorkerMsg.OUT:
-            if 'qp' in job:
-                job.pop('qp')            
-            job['message'] = job['message'] + msg['data']
-            print(msg['data'], end='')
-            data = bytes(msg['data'], 'utf-8')
-            for client in job["clients"]:
-                # shouldn't actually block ever
-                await client_write(client, ClientMsg.OUT, data)                
-        elif msg['msgid'] == WorkerMsg.RESULT:
-            if msg['data'] is not None:
-                job["file"] = msg['data']
-                endtext = '</pre> <a href="file">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file"></iframe>'
-            else:           
-                endtext = "JOB FAILED\n</pre>"
-            endtext += TMPLWWW['footer.html']
-            job["message"] = job["message"] + endtext
-            job["done"] = True
-
-            # update queue positions
-            for jid in JOBS:
-                # if there's no queue position job is running or has run
-                jb = JOBS[jid]
-                if not 'qp' in jb:
-                    continue
-                jb['qp'] = jb['qp'] - 1
-                qpmsg = 'queue position: ' + str(jb['qp']) + "\n"
-                jb['message'] = jb['message'] + qpmsg
-                for client in jb["clients"]:
-                    # shouldn't actually block ever
-                    await client_write(client, ClientMsg.OUT, bytes(qpmsg, 'utf-8'))  
-
-            # job is done, no more active clients
-            clients = job["clients"]
-            job["clients"] = []
-            # notify existing clients about the results
-            data = bytes(endtext, 'utf-8')
-            for client in clients:
-                asyncio.create_task(client_write(client, ClientMsg.RESULT, data))
-            break             
-        else:
-            print('unhandled message')             
-    print('job ' + job['id'] + ' task done')
-
 async def client_write(client, id, data):
     await client['msgqueue'].put({'msgid' : id, 'data' : data})
 
 async def client_follow(job, response):
-    jobdone = "done" in job
+    jobdone = hasattr(job, 'done')
     msgqueue = asyncio.Queue()    
     if not jobdone:
-        job["clients"].append({'msgqueue' : msgqueue})    
-    await response.write(job["message"].encode('utf-8'))
+        job.clients.append({'msgqueue' : msgqueue})    
+    await response.write(job.html.encode('utf-8'))
     if jobdone:
         return
     # output the job's messages
@@ -125,26 +74,100 @@ def bodyfirst(rootpath):
 async def run_job(job):
     global NUM_CURRENT_WORKERS
     NUM_CURRENT_WORKERS = NUM_CURRENT_WORKERS + 1
-    print("running job " + job['id'])
-    scriptdir = os.path.dirname(__file__)
-
-    proc = await asyncio.create_subprocess_exec(sys.executable, scriptdir+'/worker.py', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
-
-    asyncio.create_task(handle_job_messages(job, proc.stdout))
-    proc.stdin.write(job['filedata'])
-    del job['filedata']
-    await proc.stdin.drain()    
-    proc.stdin.close()
-    await proc.stdin.wait_closed()
-
-    await proc.wait()
+    print("running job " + job.id)
+    await job.run()
     NUM_CURRENT_WORKERS = NUM_CURRENT_WORKERS-1    
     print('proc done')
     if len(WORKERQUEUE) > 0:
         job = WORKERQUEUE.popleft()
         asyncio.create_task(run_job(job))
 
+class Job:
+
+    def appendhtml(self, toadd):
+        self.html = self.html + toadd
+
+    def __init__(self, filedata):
+        self.id = secrets.token_urlsafe()
+        self.filedata = filedata
+        self.clients = []
+        
+        # !!! toremove !!!, storing queue postions
+        self.qp = len(WORKERQUEUE)
+        if NUM_CURRENT_WORKERS == MAXWORKERS:
+            self.qp + self.qp+1
+        
+        # build the html
+        # firefox needs padding data to stream the response
+        paddata = 'a'*1024
+        padstr = '<div style="display:none;">' + paddata + '</div>'
+        self.html = '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + self.id + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>'
+        self.appendhtml('new job: ' + self.id + "\n")
+        # !!! toremove !!!, writing qp from Job
+        self.appendhtml( 'queue position: ' + str(self.qp) + "\n")
+
+    async def process_messages(self, stream_reader):
+        while True:
+            try:
+                msg = await StreamReader_recv(stream_reader)
+            except:
+                print('TASK FAILED')
+                msg = {'msgid' : WorkerMsg.RESULT, 'data' : None}       
+            if msg['msgid'] == WorkerMsg.OUT:
+                self.appendhtml(msg['data'])
+                print(msg['data'], end='')
+                data = bytes(msg['data'], 'utf-8')
+                for client in self.clients:
+                    # shouldn't actually block ever
+                    await client_write(client, ClientMsg.OUT, data)                
+            elif msg['msgid'] == WorkerMsg.RESULT:
+                if msg['data'] is not None:
+                    self.file = msg['data']
+                    endtext = '</pre> <a href="file">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file"></iframe>'
+                else:           
+                    endtext = "JOB FAILED\n</pre>"
+                endtext += TMPLWWW['footer.html']
+                self.appendhtml(endtext)
+                self.done = True
     
+                # update queue positions
+                for jid in JOBS:
+                    # if there's no queue position job is running or has run
+                    jb = JOBS[jid]
+                    if jb.qp != 0:
+                        continue
+                    jb.qp = jb.qp - 1
+                    qpmsg = 'queue position: ' + str(jb.qp) + "\n"
+                    self.appendhtml(qpmsg)
+                    for client in jb.clients:
+                        # shouldn't actually block ever
+                        await client_write(client, ClientMsg.OUT, bytes(qpmsg, 'utf-8'))  
+    
+                # job is done, no more active clients
+                clients = self.clients
+                del self.clients
+                # notify existing clients about the results
+                data = bytes(endtext, 'utf-8')
+                for client in clients:
+                    asyncio.create_task(client_write(client, ClientMsg.RESULT, data))
+                break             
+            else:
+                print('unhandled message')             
+        print('job ' + self.id + ' task done')
+    
+    async def run(self):
+        scriptdir = os.path.dirname(__file__)
+        proc = await asyncio.create_subprocess_exec(sys.executable, scriptdir+'/worker.py', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+    
+        asyncio.create_task(self.process_messages(proc.stdout))
+        proc.stdin.write(self.filedata)
+        del self.filedata
+        await proc.stdin.drain()    
+        proc.stdin.close()
+        await proc.stdin.wait_closed()
+    
+        return await proc.wait()
+
 
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
@@ -153,32 +176,22 @@ async def screen_data_reader_handler(request):
 
     # read in the input data
     filedata = post["file"].file.read()
-    post["file"].file.close()
-    
-    # send some padding data so the response is streamed (Firefox needs this)
-    paddata = 'a'*1024
-    padstr = '<div style="display:none;">' + paddata + '</div>'
+    post["file"].file.close()    
 
     # create the job
-    tok = secrets.token_urlsafe()
-    JOBS[tok] = { 'clients' : [], 'message' : '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + tok + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>', 'qp' : -1, 'id': tok}
-    JOBS[tok]['filedata'] = filedata
-    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'new job: ' + tok + "\n"
-    JOBS[tok]['qp'] = len(WORKERQUEUE)
-    if NUM_CURRENT_WORKERS == MAXWORKERS:
-        JOBS[tok]['qp'] = JOBS[tok]['qp'] + 1
-    JOBS[tok]['message'] =  JOBS[tok]['message'] + 'queue position: ' + str(JOBS[tok]['qp']) + "\n" 
+    job = Job(filedata)
+    JOBS[job.id] = job
  
     # the job queue is empty when not all workers are in use so just run the job
     if NUM_CURRENT_WORKERS < MAXWORKERS:        
-        asyncio.create_task(run_job(JOBS[tok]))
+        asyncio.create_task(run_job(job))
     else:
     # otherwise enqueue the job
-        print("not running job yet " + tok)
-        WORKERQUEUE.append(JOBS[tok])
+        print("not running job yet " + job.id)
+        WORKERQUEUE.append(job)
 
     # redirect to the job status page
-    jobpath = tok + "/job"
+    jobpath = job.id + "/job"
     raise HTTPFound(location=jobpath)
 
 async def job_status_page(request):
@@ -197,8 +210,8 @@ async def file_requested(request):
     if not jobid in JOBS:
         return web.Response(status=404, text='No job found')
     job = JOBS[jobid]        
-    cd = 'attachment; filename="' + job["file"][0] + '"'  
-    response = web.Response(body=job['file'][1],  headers={'Content-Disposition' : cd})
+    cd = 'attachment; filename="' + job.file[0] + '"'  
+    response = web.Response(body=job.file[1],  headers={'Content-Disposition' : cd})
     return response
 
 async def root_handler(request):
