@@ -19,8 +19,7 @@
             "request": "launch",
             "program": "${file}",
             "cwd": "${fileDirname}",
-            //"args": ["--infile", "test_videos/fastdark.mp4"],
-            //"args": ["--inwindowtitle", "online"],
+            "args": ["-j", "2"],
             "console": "integratedTerminal"
         }
     ]

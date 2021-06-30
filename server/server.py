@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys, os
+import sys, os, getopt
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -10,13 +10,8 @@ import pickle
 from enum import Enum
 from collections import deque
 
-class WorkerMsg(Enum):
-    OUT    = 1
-    RESULT = 2
-
-class ClientMsg(Enum):
-    OUT    = 1
-    RESULT = 2
+# communication with worker
+from jobmsg import JobMsg
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -51,6 +46,10 @@ class StreamReaderConnection:
         buf = await self.recv_bytes()
         return pickle.loads(buf)
 
+class ClientMsg(Enum):
+    OUT    = 1
+    RESULT = 2
+
 async def client_write(client, id, data):
     await client['msgqueue'].put({'msgid' : id, 'data' : data})
 
@@ -75,10 +74,6 @@ def bodyfirst(rootpath):
     return bf
 
 class Job:
-
-    def _appendhtml(self, toadd):
-        self.html = self.html + toadd
-
     def __init__(self, filedata):
         self.id = secrets.token_urlsafe()
         self.filedata = filedata
@@ -89,8 +84,11 @@ class Job:
         paddata = 'a'*1024
         padstr = '<div style="display:none;">' + paddata + '</div>'
         self.html = '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + self.id + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>'
-        self._appendhtml('new job: ' + self.id + "\n")        
+        self.html = self.html + 'new job: ' + self.id + "\n"        
         
+    def _appendhtml(self, toadd):
+        self.html = self.html + toadd
+
     async def add_to_page(self, msg, isEnd=False):
         self._appendhtml(msg)
         if not isEnd:
@@ -116,11 +114,11 @@ class Job:
                 msg = await srconn.recv()
             except:
                 print('TASK FAILED')
-                msg = {'msgid' : WorkerMsg.RESULT, 'data' : None}       
-            if msg['msgid'] == WorkerMsg.OUT:
+                msg = {'msgid' : JobMsg.RESULT, 'data' : None}       
+            if msg['msgid'] == JobMsg.OUT:
                 print(msg['data'], end='')
                 await self.add_to_page(msg['data'])             
-            elif msg['msgid'] == WorkerMsg.RESULT:
+            elif msg['msgid'] == JobMsg.RESULT:
                 if msg['data'] is not None:
                     self.file = msg['data']
                     endtext = '</pre> <a href="file">' + msg['data'][0] + '</a><iframe id="invisibledownload" style="display:none;" src="file"></iframe>'
@@ -131,7 +129,7 @@ class Job:
                 break             
             else:
                 print('unhandled message')             
-        print('job ' + self.id + ' task done')
+        print('job ' + self.id + ' process_messages done')
     
     async def run(self):
         scriptdir = os.path.dirname(__file__)
@@ -151,45 +149,56 @@ class JobManager:
         self.MAXWORKERS = maxworkers
         self.jobs = {}
         self.num_current_workers = 0
-        self.jobqueue = deque()
+        self.jobqueue = asyncio.Queue()
+
+        # launch queue workers
+        for i in range(maxworkers):
+            asyncio.create_task(self.task_run_jobs())
+
 
     def create_job(self, filedata):
         # create the job
         job = Job(filedata)
-        qp = len(self.jobqueue)
+        qp = self.jobqueue.qsize()
         if self.num_current_workers == self.MAXWORKERS:
             qp = qp+1
         job._appendhtml( 'queue position: ' + str(qp) + "\n")
         self.jobs[job.id] = job
 
-        # the job queue is empty when not all workers are in use so just run the job
-        if self.num_current_workers < self.MAXWORKERS:        
-            asyncio.create_task(self.task_run_job(job))
-        else:
-        # otherwise enqueue the job
-            print("not running job yet " + job.id)
-            self.jobqueue.append(job)
+        # enqueue the job
+        self.jobqueue.put_nowait(job)
+
         return job
 
     def get_job(self, jid):
         return self.jobs[jid]
 
-    async def task_run_job(self, job):
-        self.num_current_workers  = self.num_current_workers  + 1
-        print("running job " + job.id)
-        await job.run()
-        # update queue positions
-        qp = 0
-        for jb in self.jobqueue:
-            qpmsg = 'queue position: ' + str(qp) + "\n"
-            # shouldn't actually block ever
-            await jb.add_to_page(qpmsg)            
-            qp = qp + 1  
-        self.num_current_workers  = self.num_current_workers -1    
-        print('proc done')
-        if len(self.jobqueue) > 0:
-            job = self.jobqueue.popleft()
-            asyncio.create_task(self.task_run_job(job))
+    async def task_run_jobs(self):
+        while True:
+            # get a job and note worker is use
+            job = await self.jobqueue.get()
+            self.num_current_workers  = self.num_current_workers  + 1        
+            # actually run the job
+            print("running job " + job.id)
+            try:
+                await job.run()
+            except:
+                pass
+            # update queue positions
+            qp = 0
+            for jb in self.jobqueue._queue:
+                qpmsg = 'queue position: ' + str(qp) + "\n"
+                try:
+                    # shouldn't actually block ever
+                    await jb.add_to_page(qpmsg)
+                except:
+                    pass            
+                qp = qp + 1
+            # note job is done, worker is free
+            self.jobqueue.task_done()  
+            self.num_current_workers  = self.num_current_workers -1    
+            print('finished job ' + job.id)
+        
     
 
 async def screen_data_reader_handler(request):
@@ -236,6 +245,23 @@ async def root_handler(request):
 
 async def main():
     print('pid ' + str(os.getpid()))
+    
+    # parse arguments
+    argv = sys.argv[1:]
+    def usage(code):
+        print('screen_data_reader.py [-j num_workers]')
+        sys.exit(code)
+    MAXWORKERS = 1
+    try:
+        opts, args = getopt.getopt(argv,"hj:",["help", "jobs="])
+    except getopt.GetoptError:        
+        usage(2)
+    for opt, arg in opts:
+        if opt in ("-h", "--help"):
+            usage(0)
+        elif opt in ("-j", "--jobs"):
+            MAXWORKERS = int(arg)
+
     # load in templates
     global TMPLWWW
     TMPLWWW = {'BASETITLE' : 'Screen Data Reader'}
@@ -245,8 +271,7 @@ async def main():
         with open(entry.path, 'r') as file:
             TMPLWWW[entry.name] = file.read()        
     
-    # setup the JobManager
-    MAXWORKERS = 1
+    # setup the JobManager    
     global JM
     JM = JobManager(MAXWORKERS)
         

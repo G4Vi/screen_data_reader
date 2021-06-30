@@ -6,11 +6,8 @@ scriptdir = os.path.dirname(__file__)
 sys.path.insert(0, scriptdir + "/..")
 import screen_data_reader
 
-class WorkerMsg(Enum):
-    OUT    = 1
-    RESULT = 2
-
-
+# communication with server
+from jobmsg import JobMsg
 
 class PickleStdout():
     def __init__(self):
@@ -27,7 +24,7 @@ class PickleStdout():
         self.old_stdout.buffer.write(header+pickled)
 
     def write(self, msg):
-        self.send({ 'jobid' : 'filler', 'msgid' : WorkerMsg.OUT, 'data' : msg})
+        self.send({ 'jobid' : 'filler', 'msgid' : JobMsg.OUT, 'data' : msg})
     
     def flush(self):
         self.old_stdout.flush()
@@ -41,7 +38,7 @@ if __name__ == "__main__":
     toret = screen_data_reader.fromBuf(inputdata)
 
     # send the response on the pipe to ensure it comes after the other messages
-    sys.stdout.send({ 'jobid' : 'filler', 'msgid' : WorkerMsg.RESULT, 'data' : toret})    
+    sys.stdout.send({ 'jobid' : 'filler', 'msgid' : JobMsg.RESULT, 'data' : toret})    
     
     
     
