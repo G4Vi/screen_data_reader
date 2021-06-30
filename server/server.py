@@ -22,31 +22,34 @@ def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 # inspired by multiprocessing.connection.Connection
-async def StreamReader_recv_bytes(self, maxsize=None):
-    # read the size
-    try:
-        buf = await self.readexactly(4)
-    except:
-        print('failed read size')
-        raise
-    size, = struct.unpack("!i", buf)
-    if size == -1:
-        buf = await self.readexactly(8)
-        size, = struct.unpack("!Q", buf)
-    if maxsize is not None and size > maxsize:
-        return None
-    # read the message
-    try:
-        return await self.readexactly(size)
-    except:
-        print('failed read message')
-        raise
+class StreamReaderConnection:
 
-# inspired by multiprocessing.connection.Connection
-async def StreamReader_recv(self):
-    buf = await StreamReader_recv_bytes(self)
-    return pickle.loads(buf)
+    def __init__(self, stream_reader):
+        self.sr = stream_reader
+
+    async def recv_bytes(self, maxsize=None):
+        # read the size
+        try:
+            buf = await self.sr.readexactly(4)
+        except:
+            print('failed read size')
+            raise
+        size, = struct.unpack("!i", buf)
+        if size == -1:
+            buf = await self.sr.readexactly(8)
+            size, = struct.unpack("!Q", buf)
+        if maxsize is not None and size > maxsize:
+            return None
+        # read the message
+        try:
+            return await self.sr.readexactly(size)
+        except:
+            print('failed read message')
+            raise
     
+    async def recv(self):
+        buf = await self.recv_bytes()
+        return pickle.loads(buf)
 
 async def client_write(client, id, data):
     await client['msgqueue'].put({'msgid' : id, 'data' : data})
@@ -71,55 +74,52 @@ def bodyfirst(rootpath):
     bf = bf.replace('$ROOTPATH', rootpath)
     return bf
 
-async def run_job(job):
-    global NUM_CURRENT_WORKERS
-    NUM_CURRENT_WORKERS = NUM_CURRENT_WORKERS + 1
-    print("running job " + job.id)
-    await job.run()
-    NUM_CURRENT_WORKERS = NUM_CURRENT_WORKERS-1    
-    print('proc done')
-    if len(WORKERQUEUE) > 0:
-        job = WORKERQUEUE.popleft()
-        asyncio.create_task(run_job(job))
-
 class Job:
 
-    def appendhtml(self, toadd):
+    def _appendhtml(self, toadd):
         self.html = self.html + toadd
 
     def __init__(self, filedata):
         self.id = secrets.token_urlsafe()
         self.filedata = filedata
-        self.clients = []
-        
-        # !!! toremove !!!, storing queue postions
-        self.qp = len(WORKERQUEUE)
-        if NUM_CURRENT_WORKERS == MAXWORKERS:
-            self.qp + self.qp+1
+        self.clients = []        
         
         # build the html
         # firefox needs padding data to stream the response
         paddata = 'a'*1024
         padstr = '<div style="display:none;">' + paddata + '</div>'
         self.html = '<html><head><title>' + TMPLWWW['BASETITLE'] + ': ' + self.id + '</title></head>' + bodyfirst('..') +'<h3>Job Output</h3>' + padstr + '<pre>'
-        self.appendhtml('new job: ' + self.id + "\n")
-        # !!! toremove !!!, writing qp from Job
-        self.appendhtml( 'queue position: ' + str(self.qp) + "\n")
+        self._appendhtml('new job: ' + self.id + "\n")        
+        
+    async def add_to_page(self, msg, isEnd=False):
+        self._appendhtml(msg)
+        if not isEnd:
+            msgtype = ClientMsg.OUT
+        else:
+            self.done = True
+            msgtype = ClientMsg.RESULT
+
+        data = bytes(msg, 'utf-8')
+        clients = self.clients
+        # job is done, no more active clients
+        if isEnd:
+            del self.clients
+        # msg the current clients with the data too
+        for client in clients:
+            # shouldn't actually block ever
+            await client_write(client, msgtype, data)   
 
     async def process_messages(self, stream_reader):
+        srconn = StreamReaderConnection(stream_reader)
         while True:
             try:
-                msg = await StreamReader_recv(stream_reader)
+                msg = await srconn.recv()
             except:
                 print('TASK FAILED')
                 msg = {'msgid' : WorkerMsg.RESULT, 'data' : None}       
             if msg['msgid'] == WorkerMsg.OUT:
-                self.appendhtml(msg['data'])
                 print(msg['data'], end='')
-                data = bytes(msg['data'], 'utf-8')
-                for client in self.clients:
-                    # shouldn't actually block ever
-                    await client_write(client, ClientMsg.OUT, data)                
+                await self.add_to_page(msg['data'])             
             elif msg['msgid'] == WorkerMsg.RESULT:
                 if msg['data'] is not None:
                     self.file = msg['data']
@@ -127,29 +127,7 @@ class Job:
                 else:           
                     endtext = "JOB FAILED\n</pre>"
                 endtext += TMPLWWW['footer.html']
-                self.appendhtml(endtext)
-                self.done = True
-    
-                # update queue positions
-                for jid in JOBS:
-                    # if there's no queue position job is running or has run
-                    jb = JOBS[jid]
-                    if jb.qp != 0:
-                        continue
-                    jb.qp = jb.qp - 1
-                    qpmsg = 'queue position: ' + str(jb.qp) + "\n"
-                    self.appendhtml(qpmsg)
-                    for client in jb.clients:
-                        # shouldn't actually block ever
-                        await client_write(client, ClientMsg.OUT, bytes(qpmsg, 'utf-8'))  
-    
-                # job is done, no more active clients
-                clients = self.clients
-                del self.clients
-                # notify existing clients about the results
-                data = bytes(endtext, 'utf-8')
-                for client in clients:
-                    asyncio.create_task(client_write(client, ClientMsg.RESULT, data))
+                await self.add_to_page(endtext, True)                
                 break             
             else:
                 print('unhandled message')             
@@ -168,6 +146,51 @@ class Job:
     
         return await proc.wait()
 
+class JobManager:
+    def __init__(self, maxworkers):
+        self.MAXWORKERS = maxworkers
+        self.jobs = {}
+        self.num_current_workers = 0
+        self.jobqueue = deque()
+
+    def create_job(self, filedata):
+        # create the job
+        job = Job(filedata)
+        qp = len(self.jobqueue)
+        if self.num_current_workers == self.MAXWORKERS:
+            qp = qp+1
+        job._appendhtml( 'queue position: ' + str(qp) + "\n")
+        self.jobs[job.id] = job
+
+        # the job queue is empty when not all workers are in use so just run the job
+        if self.num_current_workers < self.MAXWORKERS:        
+            asyncio.create_task(self.task_run_job(job))
+        else:
+        # otherwise enqueue the job
+            print("not running job yet " + job.id)
+            self.jobqueue.append(job)
+        return job
+
+    def get_job(self, jid):
+        return self.jobs[jid]
+
+    async def task_run_job(self, job):
+        self.num_current_workers  = self.num_current_workers  + 1
+        print("running job " + job.id)
+        await job.run()
+        # update queue positions
+        qp = 0
+        for jb in self.jobqueue:
+            qpmsg = 'queue position: ' + str(qp) + "\n"
+            # shouldn't actually block ever
+            await jb.add_to_page(qpmsg)            
+            qp = qp + 1  
+        self.num_current_workers  = self.num_current_workers -1    
+        print('proc done')
+        if len(self.jobqueue) > 0:
+            job = self.jobqueue.popleft()
+            asyncio.create_task(self.task_run_job(job))
+    
 
 async def screen_data_reader_handler(request):
     if request.content_length > 104857600:
@@ -179,26 +202,19 @@ async def screen_data_reader_handler(request):
     post["file"].file.close()    
 
     # create the job
-    job = Job(filedata)
-    JOBS[job.id] = job
- 
-    # the job queue is empty when not all workers are in use so just run the job
-    if NUM_CURRENT_WORKERS < MAXWORKERS:        
-        asyncio.create_task(run_job(job))
-    else:
-    # otherwise enqueue the job
-        print("not running job yet " + job.id)
-        WORKERQUEUE.append(job)
+    job = JM.create_job(filedata)    
 
     # redirect to the job status page
     jobpath = job.id + "/job"
     raise HTTPFound(location=jobpath)
 
 async def job_status_page(request):
-    jobid = request.match_info['jobid'] 
-    if not jobid in JOBS:
-        return web.Response(status=404, text='No job found')
-    job = JOBS[jobid]   
+    jobid = request.match_info['jobid']
+    try:
+        job = JM.get_job(jobid)
+    except:
+        return web.Response(status=404, text='No job found')        
+  
     response = web.StreamResponse(headers={'Content-Type': 'text/html'})
     await response.prepare(request)
     await client_follow(job, response)   
@@ -207,9 +223,10 @@ async def job_status_page(request):
 
 async def file_requested(request):
     jobid = request.match_info['jobid'] 
-    if not jobid in JOBS:
-        return web.Response(status=404, text='No job found')
-    job = JOBS[jobid]        
+    try:
+        job = JM.get_job(jobid)
+    except:
+        return web.Response(status=404, text='No job found')           
     cd = 'attachment; filename="' + job.file[0] + '"'  
     response = web.Response(body=job.file[1],  headers={'Content-Disposition' : cd})
     return response
@@ -228,15 +245,10 @@ async def main():
         with open(entry.path, 'r') as file:
             TMPLWWW[entry.name] = file.read()        
     
-    # setup JOB queue
-    global JOBS
-    JOBS = {}
-    global MAXWORKERS
+    # setup the JobManager
     MAXWORKERS = 1
-    global NUM_CURRENT_WORKERS
-    NUM_CURRENT_WORKERS = 0
-    global WORKERQUEUE
-    WORKERQUEUE = deque()
+    global JM
+    JM = JobManager(MAXWORKERS)
         
     # launch the web server
     app = web.Application(client_max_size=114857600)
