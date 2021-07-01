@@ -46,5 +46,9 @@ See `server/README.md` for nginx reverse proxy setup
 ## License
 MIT, see `LICENSE`
 
+## Help
+
+Feel free to ask in the [PSXDEV discord](https://discord.gg/QByKPpH) 
+
 ## Running basic web app instance
 Run `basic_server/server.py` and navigate to `http://127.0.0.1:8080`

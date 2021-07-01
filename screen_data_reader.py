@@ -502,6 +502,8 @@ def fromStdin():
     return fromBuf(sys.stdin.buffer.read())
 
 if __name__ == '__main__':
+    version = 'v0.10'
+    print('screen_data_reader ' + version)
     print('screen_data_reader: opencv version: ' + cv2.__version__)
 
     def usage(code):
