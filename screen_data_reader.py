@@ -33,6 +33,7 @@ import cv2
 import numpy as np
 import sys, getopt, os, time
 import zlib # crc32
+from pyzbar.pyzbar import decode
 
 wexpt = 75
 worg = 77
@@ -41,60 +42,8 @@ horg = 51
 ratioorg = worg/horg
 
 def decodeImage(image, laststart):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)    
-    blur = cv2.GaussianBlur(gray, (5,5), 0)
-    thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
-    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    
-    
-    #print(contours)
-    max_area = 0
-    c = -1
-    tocheck = []
-    for i in contours:
-        c+=1
-        area = cv2.contourArea(i)
-        if (area <= 3600):
-            continue
-        #if (area <= max_area):
-        #    continue
-        # try to find rectangle
-        peri = cv2.arcLength(i, True)
-        approx = cv2.approxPolyDP(i, 0.15 * peri, True)
-        if len(approx) != 4:
-            continue
-        # check the intensity of the contour to remove some false positives
-        #colorsum = 0
-        #for p in approx:
-        #    colorsum += gray[p[0][1]][p[0][0]]
-        #if colorsum < 200:
-        #    continue
-        rot_rect = cv2.minAreaRect(approx)
-        (center), (width,height), angle = rot_rect
-        # greater than 45 means we rotated the wrong way to get width and height
-        # assuming the photo was taken <= 45 degress off
-        if angle > 45:
-            th = height
-            height = width
-            width = th                            
-        ratio = width/height
-        # needs to be close to data frame ratio, but accommodate non-square pixels
-        if abs(ratio-ratioorg) > 0.2:
-            continue             
-        max_area = area        
-        tocheck.append(approx)
-        #if laststart == 16:
-        #    imcopy = image.copy()
-        #    cv2.drawContours(imcopy, [approx], 0, (255, 0, 0), 3)
-        #    cv2.imshow("approx", imcopy)
-        #    cv2.waitKey()
-    if len(tocheck) == 0:
-        #print("No RECT")
-        return
-    #print('tocheck len ' + str(len(tocheck)))
-    largest = 0
-    smallest = 255
-    for cnt in tocheck:
+
+    def quadrangleToRotatedRectImage(gray, cnt):
         # now that we have our screen contour, we need to determine
         # the top-left, top-right, bottom-right, and bottom-left
         # points so that we can later warp the image -- we'll start
@@ -142,35 +91,135 @@ def decodeImage(image, laststart):
         warp = cv2.warpPerspective(gray, M, (maxWidth, maxHeight))
         #cv2.imshow('warp', warp)
         #cv2.waitKey()
-        
-        # convert to black and white
-        #(thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        # works on faststock
-        #(thresh, bg) = cv2.threshold(warp, 225, 255, cv2.THRESH_BINARY)
-        # works on fastdark
-        #(thresh, bg) = cv2.threshold(warp, 200, 255, cv2.THRESH_BINARY)
-        
-        warp = cv2.GaussianBlur(warp, (5,5), 0)
         tmax = np.amax(warp)
         tmin = np.amin(warp)
         threshval = int(((tmax-tmin)/2) + tmin+55)
         #print('thresval ' + str(threshval) + 'tmax ' + str(tmax) + ' tmin ' + str(tmin))
         (thresh, bg) = cv2.threshold(warp, threshval, 255, cv2.THRESH_BINARY)
+        return bg
 
-        #if tmax > largest:
-        #    print('largest ' + str(tmax))
-        #    largest = tmax
-        #
-        #if tmin < smallest:
-        #    print('smallest' + str(tmin))
-        #    smallest = tmin
+    def bytes2uint16(thebytes, index):
+        return thebytes[index] | (thebytes[index+1] << 8)
+
+    def decode_bytes(readbytes):
+        # extract startindex
+        startindex = bytes2uint16(readbytes, 0)
+
+        # extract endindex
+        endindex = bytes2uint16(readbytes, 2)
+
+        print("startindex " + str(startindex) + " endindex " + str(endindex))
         
+        if startindex > endindex:
+            return
+
+        # extract the checksum
+        checkin = (wexpt * hexpt)-32
+        #checkbits = mybits[checkin:(wexpt * hexpt)]
+        #checkbytes = bits2bytes(checkbits)
+        checkbytes = [readbytes[80], readbytes[81], readbytes[82], readbytes[83]]
+        print("checkbytes " + hex(readbytes[80]) + " " + hex(readbytes[81]) + " " + hex(readbytes[82]) + " " + hex(readbytes[83]))
+        checksum = checkbytes[0] | (checkbytes[1] << 8) | (checkbytes[2] << 16) | (checkbytes[3] << 24)
+
+        # calculate the checksum
+        packetsize = readbytes[4] | (readbytes[5] << 8)
+        calcchk = zlib.crc32(bytes(readbytes[0:packetsize+6]))
+
+        # verify the checksum matches
+        if checksum != calcchk:
+            print("chknfailed calc " + str(calcchk) + " read " + str(checksum))
+            #imcopy = image.copy()
+            #cv2.drawContours(imcopy, [cnt], 0, (0, 255, 0), 3)
+            #cv2.imshow("contours", imcopy)
+            #f = open("dump/bad.txt", "wb")
+            #f.write(databytes)
+            #f.close()
+            #cv2.waitKey()
+            return
+
+        # extract data
+        databytes = readbytes[6:(packetsize+6)]
+        #print('startindex ' + str(startindex) + ' crc32 ' + str(hex(calcchk)))
+        #print(databytes)
+        return {'startindex' : startindex, 'endindex' : endindex, 'crc32' : calcchk, 'data' : databytes}
+
+    qrCodeDetector = cv2.QRCodeDetector()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    retval, points	=	qrCodeDetector.detect(gray);
+    if retval:
+        cnt = points
+        bg = quadrangleToRotatedRectImage(gray, points)
+        myqr = decode(bg)
+        print(myqr)
+        if myqr:
+            #myqrdata = myqr[0].data.decode('utf-8').encode("latin1");
+            myqrdata = myqr[0].data
+            print("strlen " + str(len(myqrdata)))
+            b = bytearray()
+            b.extend(myqrdata)
+            print("arrlen " + str(len(b)))
+            decoded = decode_bytes(b)
+            if decoded:
+                print("success")
+                return decoded
+    return
 
 
-        #bg = cv2.adaptiveThreshold(warp, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 61, 1)
-        #(thresh, bg) = cv2.threshold(warp, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        #cv2.imshow('adaptive', bg)
-        #cv2.waitKey()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5,5), 0)
+    thresh = cv2.adaptiveThreshold(blur, 255, 1, 1, 11, 2)
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+
+    #print(contours)
+    max_area = 0
+    c = -1
+    tocheck = []
+    for i in contours:
+        c+=1
+        area = cv2.contourArea(i)
+        if (area <= 3600):
+            continue
+        #if (area <= max_area):
+        #    continue
+        # try to find rectangle
+        peri = cv2.arcLength(i, True)
+        approx = cv2.approxPolyDP(i, 0.15 * peri, True)
+        if len(approx) != 4:
+            continue
+        # check the intensity of the contour to remove some false positives
+        #colorsum = 0
+        #for p in approx:
+        #    colorsum += gray[p[0][1]][p[0][0]]
+        #if colorsum < 200:
+        #    continue
+        rot_rect = cv2.minAreaRect(approx)
+        (center), (width,height), angle = rot_rect
+        # greater than 45 means we rotated the wrong way to get width and height
+        # assuming the photo was taken <= 45 degress off
+        if angle > 45:
+            th = height
+            height = width
+            width = th
+        ratio = width/height
+        # needs to be close to data frame ratio, but accommodate non-square pixels
+        if abs(ratio-ratioorg) > 0.2:
+            continue
+        max_area = area
+        tocheck.append(approx)
+        #if laststart == 16:
+        #    imcopy = image.copy()
+        #    cv2.drawContours(imcopy, [approx], 0, (255, 0, 0), 3)
+        #    cv2.imshow("approx", imcopy)
+        #    cv2.waitKey()
+    if len(tocheck) == 0:
+        #print("No RECT")
+        return
+    #print('tocheck len ' + str(len(tocheck)))
+    largest = 0
+    smallest = 255
+    for cnt in tocheck:
+        bg = quadrangleToRotatedRectImage(gray, cnt)
         
         # remove frame
         x = 0
@@ -231,9 +280,6 @@ def decodeImage(image, laststart):
             bits = arraybits[index:(index+16)]
             thebytes = bits2bytes(bits)
             return thebytes[0] | (thebytes[1] << 8)
-    
-        def bytes2uint16(thebytes, index):
-            return thebytes[index] | (thebytes[index+1] << 8)
         
         def decode_bits(mybits):
             # read size
@@ -243,41 +289,8 @@ def decodeImage(image, laststart):
             
             # convert to bytes for retrieving the header and data bytes
             readbytes = bits2bytes(mybits[0:((packetsize+6)*8)])
-    
-            # extract startindex
-            startindex = bytes2uint16(readbytes, 0)
+            return decode_bytes(readbytes);
             
-            # extract endindex
-            endindex = bytes2uint16(readbytes, 2)
-        
-            if startindex > endindex:
-                return       
-    
-            # extract the checksum
-            checkin = (wexpt * hexpt)-32
-            checkbits = mybits[checkin:(wexpt * hexpt)]
-            checkbytes = bits2bytes(checkbits)
-            checksum = checkbytes[0] | (checkbytes[1] << 8) | (checkbytes[2] << 16) | (checkbytes[3] << 24)
-    
-            # calculate the checksum
-            calcchk = zlib.crc32(bytes(readbytes))      
-            
-            # verify the checksum matches
-            if checksum != calcchk:
-                #imcopy = image.copy()
-                #cv2.drawContours(imcopy, [cnt], 0, (0, 255, 0), 3)
-                #cv2.imshow("contours", imcopy)
-                #f = open("dump/bad.txt", "wb")
-                #f.write(databytes)
-                #f.close()
-                #cv2.waitKey()
-                return
-    
-            # extract data
-            databytes = readbytes[6:(packetsize+6)]
-            #print('startindex ' + str(startindex) + ' crc32 ' + str(hex(calcchk)))
-            #print(databytes)
-            return {'startindex' : startindex, 'endindex' : endindex, 'crc32' : calcchk, 'data' : databytes}
         
         decoded = decode_bits(mybits)
         if decoded:            
